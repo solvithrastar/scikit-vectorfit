@@ -248,8 +248,9 @@ class VectorFitting:
 
         # responses will be weighted according to their norm;
         # alternative: equal weights with weight_response = 1.0
-        # or anti-proportional weights with weight_response = 1 / np.linalg.norm(freq_response)
-        weights_responses = np.linalg.norm(freq_responses, axis=1)
+        # or anti-proportional weights with 
+        weights_responses = 1 / np.linalg.norm(freq_responses, axis=1)
+        # weights_responses = np.linalg.norm(freq_responses, axis=1)
         #weights_responses = np.ones(self.network.nports ** 2)
 
         # weight of extra equation to avoid trivial solution
@@ -847,7 +848,9 @@ class VectorFitting:
             Test Matrix," in IEEE Transactions on Microwave Theory and Techniques, vol. 56, no. 12, pp. 2701-2708,
             Dec. 2008, DOI: 10.1109/TMTT.2008.2007319.
         """
-
+        if parameter_type.lower() == 'y':
+            violation_bands = self._passivity_test_y()
+            return violation_bands
         if parameter_type.lower() != 's':
             raise NotImplementedError('Passivity testing is currently only supported for scattering (S) parameters.')
         if parameter_type.lower() == 's' and len(np.flatnonzero(self.proportional_coeff)) > 0:
@@ -922,6 +925,49 @@ class VectorFitting:
                     violation_bands.append([f_start, f_stop])
 
         return np.array(violation_bands)
+
+    def _passivity_test_y(self) -> np.ndarray:
+        """
+        blabla, finish this later
+
+        :return: _description_
+        :rtype: np.ndarray
+        """
+
+        violation_bands = []
+        # Get State-Space model
+        A, B, C, D, _ = self._get_ABCDE()
+        Acmplx, Bcmplx, Ccmplx, Dcmplx = A, B, C, D  # Need to understand a bit better what's going on here.
+        # Not sure about the real vs positive aspects of everything there
+        # The Matlab code converts to real only at some point. I need to look into that
+
+        if np.sum(np.linalg.eigvals(D) == 0) > 0:
+            Ahat = np.linalg.inv(A)
+            Bhat = -Ahat @ B
+            Chat = C @ Ahat
+            Dhat = D - C @ Ahat @ B
+            A, B, C, D = Ahat, Bhat, Chat, Dhat
+        D_inv = np.linalg.inv(D)
+        bdc_a = B @ D_inv @ C - A
+        S1 = A @ bdc_a
+
+        wS1 = np.linalg.eigvals(S1) ** (1/2)
+
+        if np.any(np.linalg.eig(Dcmplx) == 0):
+            wS1 = 1/wS1
+        ind = np.where(np.imag(wS1) == 0, True, False)
+        wS1 = wS1[ind]
+        sing_w = np.sort(wS1)
+        if len(sing_w)==0:
+            return np.array(violation_bands)
+        
+        A, B, C, D = Acmplx, Bcmplx, Ccmplx, Dcmplx
+        
+        # Now we create a list of frequencies at midpoint of all the bands
+        # Look at RPdriver.m lines 783 and onwards for further instructions.
+        
+
+        
 
     def is_passive(self, parameter_type: str = 's') -> bool:
         """
