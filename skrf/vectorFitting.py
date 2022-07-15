@@ -1487,9 +1487,9 @@ class VectorFitting:
         # Outer loop
         iter_out = 0
         niter_out = 10
-        niter_in = 1
+        niter_in = 2
         break_outer = False
-        s = 1j * 2 * np.pi * self.network.f
+        s = 1j * 2 * np.pi * self.network.f  # Look at potential scaling here as in VF
         while iter_out <= niter_out:
             if break_outer:
                 break
@@ -1509,16 +1509,20 @@ class VectorFitting:
                     # and bring it up above zero.
                     s_viol, g_pass, ss = self.violextrema(violation_bands)
                     print(f"Shape of s_viol: {s_viol.shape}")
+                    print(f"{s_viol=}")
                     s2 = np.sort(s_viol)
                     print(f"{s2=}")
                     print(f"{np.linalg.eigvals(D1)=}")
                     if len(s2) == 0 and np.all(np.linalg.eigvals(D1) > 0):
                         break
 
-                A1, B1, C1, D1 = self.FRPY(
+                C1, D1 = self.FRPY(
                     A0, B0, C0, D0, s, s2, s3
                 )  # Need to work on the output of that function there
-
+                # Here I need to update the residues ad poles and such
+                # before going on and checking the passivity again
+                self.residues = C1.copy().astype(complex)
+                self.constant_coeff = D1.copy()
                 if (
                     iter_in != niter_in - 1
                 ):  # Also need to work on the input parameters there
@@ -1527,14 +1531,18 @@ class VectorFitting:
                     wintervals = self.passivity_test(
                         parameter_type="y"
                     )  # Now what´s this for?
-                    s_viol = self.violextrema()
+                    s_viol, g_pass, ss = self.violextrema(wintervals)
                     olds3 = s3  # And what´s this for?
-                    s3 = np.vstack(
-                        (s3, s2, s_viol.T)
-                    )  # This stuff looks a bit weird but I´ll take a look later
+                    if len(s3) == 0:
+                        s3 = np.vstack(
+                            (s2, s_viol.T)
+                        )  # This stuff looks a bit weird but I´ll take a look later
+                    else:
+                        s3 = np.vstack((s3, s2, s_viol.T))
 
                 if iter_in == niter_in - 1:
                     s3, s2 = [], []
+                    C0, D0 = C1.copy(), D1.copy()
                     # SER0 = SER1
                     # This is really what I need to implement properly. A0,B0,C0,D0 = A1,B1,C1,D1 or something like that
                     # And then another one after the whole thing.
@@ -1560,7 +1568,7 @@ class VectorFitting:
         :rtype: Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
         """
 
-        Cnew, Dnew = C, D
+        Cnew, Dnew = C.copy(), D.copy()
         N = len(self.poles)  # Maybe I need to do this for the transpose of A/poles
         # Things are very confusing regarding SERA vs poles here. I'll have to take
         # a deep dive with my matlab license
@@ -1574,8 +1582,8 @@ class VectorFitting:
         else:
             Dflag = False
 
-        bigB = []
-        bigC = []
+        # bigB = []
+        # bigC = []
         TOL = 1e-6
         Ns = len(s)
         Ns2 = len(s2)
@@ -1605,8 +1613,8 @@ class VectorFitting:
         bigV = np.zeros((1, N))
         biginvV = np.zeros((1, N))
         bigD = np.zeros((1, N))
-        print(f"{C.shape=}")
-        print(f"{C=}")
+        # print(f"{C.shape=}")
+        # print(f"{C=}")
         for m in range(N):
             # Is the C matrix really that big? In matlab it is at least, takes in network. At least sometimes it is. Kindof weird actually
             R = C[:, m]
@@ -1616,8 +1624,8 @@ class VectorFitting:
                 R = np.real(R)
             else:
                 R = np.imag(R)
-            print(f"{R.shape=}")
-            print(f"{R=}")
+            # print(f"{R.shape=}")
+            # print(f"{R=}")
             if len(R) == 1:
                 D_val, V = R, 1
             else:
@@ -1651,9 +1659,9 @@ class VectorFitting:
                 if cindex[m] == 0:
                     dum = 1 / (sk - self.poles[m])
                 elif cindex[m] == 1:
-                    dum = 1 / (sk - self.poles[m]) + 1 / (sk - self.poles[m].T)
+                    dum = 1 / (sk - self.poles[m]) + 1 / (sk - np.conj(self.poles[m]))
                 else:
-                    dum = 1j / (sk - self.poles[m].T) - 1j / (sk - self.poles[m])
+                    dum = 1j / (sk - self.poles[m]) - 1j / (sk - np.conj(self.poles[m]))
 
                 if V == 1:
                     gamm = V
@@ -1710,21 +1718,23 @@ class VectorFitting:
             weight = weight * weightfactor
 
             for m in range(N):
-                print(f"{bigV=}")
+                # print(f"{bigV=}")
                 V = np.squeeze(bigV[:, m])  # Let's hope this makes sense
-                print(f"{V=}")
+                # print(f"{V=}")
                 if V == 1:
                     invV = 1
                 else:
                     invV = np.linalg.inv(V)
                 if cindex[m] == 0:
-                    dum = 1 / (sk - self.poles[m])
+                    dum = gamm / (sk - self.poles[m])
                 elif cindex[m] == 1:
-                    dum = 1 / (sk - self.poles[m]) + 1 / (
-                        sk - self.poles[m].T
-                    )  # Don't get the Transpose here
+                    dum = gamm * (
+                        1 / (sk - self.poles[m]) + 1 / (sk - np.conj(self.poles[m]))
+                    )  # Still don't really get the transpose
                 else:
-                    dum = 1j / (sk - self.poles[m].T) - 1j / (sk - self.poles[m])
+                    dum = gamm * (
+                        1j / (sk - self.poles[m]) - 1j / (sk - np.conj(self.poles[m]))
+                    )
                 if V == 1:
                     gamm = V
                 else:
@@ -1737,11 +1747,11 @@ class VectorFitting:
                 else:
                     gamm = VD @ invVD
                 Mmat[offs] = gamm * weight
-            print(f"{Mmat=}")
-            print(f"{bigA2.shape=}")
+            # print(f"{Mmat=}")
+            # print(f"{bigA2.shape=}")
             bigA2[k, :] = Mmat
         bigA = np.vstack((bigA, bigA2))
-        print(f"{bigA.shape=}")
+        # print(f"{bigA.shape=}")
 
         bigA = np.vstack((np.real(bigA), np.imag(bigA)))
         Acol = len(bigA[0, :])
@@ -1752,21 +1762,23 @@ class VectorFitting:
         # print(f"{bigA=}")
         H = bigA.T @ bigA
 
-        Mmat2 = np.zeros((1, (N + Dflag)))
+        Mmat2 = np.zeros((N + Dflag), dtype=complex)
         viol_G = []
         viol_D = []
         viol_E = []
-        Y = np.zeros((Nc, Nc))
-        EE = np.zeros_like(Y)
-
+        # EE = np.zeros(Ns2)   Don't think this is used ever
+        # print(f"{Ns2=}")
+        # print(f"{bigA.shape=}")
+        # print(f"{Mmat=}")
+        # print(f"{s2=}")
         # Loop for constraint problem, type 1 (violating eigenvalues in s2)
         for k in range(Ns2):
             sk = s2[k]
             Y = D + np.sum(np.squeeze(C[0]) / (sk - self.poles))
 
             Z, eigvec = np.linalg.eig(np.real(Y))
-            EE[:, k] = np.real(Z)
-            Q = np.zeros_like(Y)
+            # EE[k] = np.real(Z)
+            # Q = np.zeros_like(Y)
             if np.min(np.real(Z)) < 0:  # Any violations
                 offs = 0
                 for m in range(N):
@@ -1776,51 +1788,63 @@ class VectorFitting:
                         gamm = VV
                     else:
                         gamm = VV @ invVV
-
+                    # print(f"{gamm=}")
                     if cindex[m] == 0:
                         Mmat2[offs] = gamm / (sk - self.poles[m])
                     elif cindex[m] == 1:
                         Mmat2[offs] = gamm * (
-                            1 / (sk - self.poles[m]) + 1 / (sk - self.poles[m].T)
+                            1 / (sk - self.poles[m]) + 1 / (sk - np.conj(self.poles[m]))
                         )  # Still don't really get the transpose
                     else:
                         Mmat2[offs] = gamm * (
-                            1j / (sk - self.poles[m].T) - 1j / (sk - self.poles[m])
+                            1j / (sk - self.poles[m])
+                            - 1j / (sk - np.conj(self.poles[m]))
                         )
+                    # print(f"{Mmat2=}")
                     offs += 1
                 if Dflag:
                     if VD == 1:
                         gamm = VD
                     else:
                         gamm = VD @ invVD
-
-                V1 = V[:, 0]
+                if V == 1:
+                    V1 = 1
+                else:
+                    V1 = V[:, 0]
                 qij = V1**2
                 Q = qij
-
-                B = Q @ Mmat2
+                if Q == 1:
+                    # print("This is where it's constructed")
+                    B = Q * Mmat2
+                else:
+                    B = Q @ Mmat2
+                # print(f"{B=}")
                 delz = np.real(Z)
                 if (
                     delz < 0
                 ):  # I need to figure out properly how to declare these matrices.
                     try:
                         bigB = np.vstack((bigB, B))
+                        # print("Managed with B")
                     except:
                         bigB = B.copy()
-                    bigC.append(-TOL * delz)
+                    try:
+                        bigC = np.vstack((bigC, -TOL * delz))
+                        # print("Managed with C")
+                    except:
+                        bigC = -TOL * delz.copy()
+                    # bigC.append(-TOL * delz)
                     viol_G.append(delz)
 
         # Loop for constraint problem (Type 2): all eigenvalues in s3
         Ns3 = len(s3)
+        # print(f"{Ns3=}")
         for k in range(Ns3):
             sk = s3[k]
-            Y = D + np.sum(
-                np.squeeze(C[0, 0, np.arange(0, N)])
-                / (sk - self.poles[np.arange(0, N)])
-            )
+            Y = D + np.sum(np.squeeze(C[0]) / (sk - self.poles))
 
             Z, eigvec = np.linalg.eig(np.real(Y))
-            EE[:, k] = np.real(Z)
+            # EE[:, k] = np.real(Z)
 
             tell = 0
             offs = 0
@@ -1828,36 +1852,58 @@ class VectorFitting:
             for m in range(N):
                 VV = bigV[:, m]
                 invVV = biginvV[:, m]
-
-                gamm = VV[:, 0] @ invVV[0, :]
+                if VV == 1:
+                    gamm = VV
+                else:
+                    gamm = VV @ invVV
+                # gamm = VV[:, 0] @ invVV[0, :]
                 if cindex[m] == 0:
-                    Mmat2[0, offs] = gamm / (sk - self.poles[m])
+                    Mmat2[offs] = gamm / (sk - self.poles[m])
                 elif cindex[m] == 1:
-                    Mmat2[0, offs] = gamm * (
-                        1 / (sk - self.poles[m]) + 1 / (sk - self.poles[m].T)
+                    Mmat2[offs] = gamm * (
+                        1 / (sk - self.poles[m]) + 1 / (sk - np.conj(self.poles[m]))
                     )  # Still don't really get the transpose
                 else:
-                    Mmat2[0, offs] = gamm * (
-                        1j / (sk - self.poles[m].T) - 1j / (sk - self.poles[m])
+                    Mmat2[offs] = gamm * (
+                        1j / (sk - self.poles[m]) - 1j / (sk - np.conj(self.poles[m]))
                     )
                 offs += 1
 
                 tell = 0
-            gamm = VD[:, 0] @ invVD[0, :]
-            Mmat2[0, offs] = gamm
-
-            V1 = V
+            if Dflag:
+                if VD == 1:
+                    gamm = VD
+                else:
+                    gamm = VD[:, 0] @ invVD[0, :]
+                Mmat2[offs] = gamm
+            if V == 1:
+                V1 = 1
+            else:
+                V1 = V[:, 0]
             qij = V1**2
             Q = qij
+            if Q == 1:
+                # print("This is where it's constructed")
+                B = Q * Mmat2
+            else:
+                B = Q @ Mmat2
+            # V1 = V
+            # qij = V1**2
+            # Q = qij
 
-            B = Q @ Mmat2
+            # B = Q @ Mmat2
             delz = np.real(Z)
             if delz < 0:  # I need to figure out properly how to declare these matrices.
                 try:
                     bigB = np.vstack((bigB, B))
+                    # print("Managed with B")
                 except:
                     bigB = B.copy()
-                bigC.append(-TOL * delz)
+                try:
+                    bigC = np.vstack((bigC, -TOL * delz))
+                    # print("Managed with C")
+                except:
+                    bigC = -TOL * delz.copy()
                 viol_G.append(delz)
         if Dflag:
             if eigD < 0:
@@ -1865,9 +1911,14 @@ class VectorFitting:
                 dum[N] = 1
                 try:
                     bigB = np.vstack(bigB, dum)
+                    # print("Managed with B")
                 except:
                     bigB = dum.copy()
-                bigC.append(eigD - TOL)
+                try:
+                    bigC = np.vstack((bigC, -TOL * delz))
+                    # print("Managed with C")
+                except:
+                    bigC = -TOL * delz.copy()
                 viol_G.append(eigD)
                 viol_D.append(eigD)
 
@@ -1875,24 +1926,50 @@ class VectorFitting:
             return  # I need to return some values here
 
         ff = np.zeros(len(H))
-
+        # print(f"{bigB.shape=}")
+        # print(f"{bigC.shape=}")
+        # print(f"{H.shape=}")
+        # print(f"{ff.shape=}")
+        if len(bigC) == 1:
+            bigB = np.reshape(bigB, (len(bigB), 1))
+        else:
+            bigC = np.squeeze(bigC)
         bigB = np.real(bigB)
+        # print(f"{H.shape=}")
+        # print(f"{ff.shape=}")
+        # print(f"{bigB.shape=}")
+        # print(f"{bigC.shape=}")
         for col in range(len(H)):
             if len(bigB) > 0:
-                bigB[:, col] = bigB[:, col] / Escale[col]
+                bigB[col] = bigB[col] / Escale[col]
 
         # Quadprog stuff, I have to find what the hell that is. Seems to be an internal matlab function.
+        # It looks like my bigB and bigC should not be this big. I wonder what it is. I think it relates to the input of the whole thing
+        # The shape of the output looks good though.
 
-        dx = quadprog.solve_qp(H, ff, -bigB, bigC)
-        print(f"Solving quadprog right now: {dx}")
+        dx, f, xu, iterations, lagrangian, iact = quadprog.solve_qp(H, ff, -bigB, bigC)
+        # print(f"Solving quadprog right now: {dx.shape=}")
         dx = dx / Escale
-
+        Cnew = C.copy()
+        Dnew = D.copy()
+        bigV = bigV[0]
+        biginvV = biginvV[0]
+        # print(f"{bigV=}")
+        # print(f"{Cnew.shape=}")
         for m in range(N):
+            # print(f"{m=}")
+            # print(f"{dx[m]=}")
+            # print(f"{Cnew[:, m].shape=}")
             if cindex[m] == 0:
-                D1 = np.diag(dx[m])
-                Cnew[:, m] = (
-                    Cnew[:, m] + bigV[:, m] @ D1 @ biginvV[:, m]
-                )  # Did I define Cnew already?
+                if isinstance(dx[m], float):
+                    D1 = dx[m]
+                    # print(f"{bigV[m]=}")
+                    # print(f"{biginvV[m]=}")
+                    # print(f"{bigV[m] * D1 * biginvV[m]=}")
+                    Cnew[:, m] = Cnew[:, m] + bigV[m] * D1 * biginvV[m]
+                else:
+                    D1 = np.diag(np.array(dx[m]))
+                    Cnew[:, m] = Cnew[:, m] + bigV[:, m] @ D1 @ biginvV[:, m]
             elif cindex[m] == 1:
                 GAMM1 = bigV[:, m]
                 GAMM2 = bigV[:, m + 1]
@@ -1907,15 +1984,23 @@ class VectorFitting:
                 R2new = R2 + GAMM2 @ D2 @ invGAMM2
                 Cnew[:, m] = R1new + 1j * R2new
                 Cnew[:, m + 1] = R1new - 1j * R2new
+        if Dflag:
+            if isinstance(dx[m], float):
+                DD = dx[m]
+                # print(f"{bigV[m]=}")
+                # print(f"{biginvV[m]=}")
+                # print(f"{bigV[m] * D1 * biginvV[m]=}")
+                Dnew = Cnew + VD * D1 * invVD
+            else:
+                DD = np.diag(dx[N])
+                Dnew = Dnew + VD @ DD @ invVD
 
-        DD = np.diag(dx[N])
-        Dnew = Dnew + VD @ DD @ invVD
-
-        Dnew = (Dnew + Dnew.T) / 2
+            Dnew = (Dnew + Dnew.T) / 2
         for m in range(N):
             Cnew[:, m] = (Cnew[:, m] + Cnew[:, m].T) / 2
+        # Now it's a question of what the hell to return. Probably all the new ABCD matrices or something like that and then recompute poles based on them.
 
-        # Now it's a question of what the hell to return. Probably all the ABCD matrices.
+        # Ok let's figure out the output now
         return Cnew, Dnew
 
     # I'm pretty sure that this thing is assuming D and C having a different shape and I'll have to fix it
@@ -1983,7 +2068,7 @@ class VectorFitting:
                 EE[:, k] = np.diag(EV)
 
             # Identifying violations, picking minima for s2
-            s_pass_ind = np.zeros(shape=(1, len(s_pass)))
+            s_pass_ind = np.zeros(shape=(len(s_pass)))
 
             for row in range(Nc):
                 if EE[row, 0] < 0:
@@ -2006,9 +2091,8 @@ class VectorFitting:
             dums = [smin, smin2]
             smin = dums[ind]
             g_pass = min(g_pass, np.min(np.min(EE)))
-            # print(f"{EE}")
-
         s_pass = np.array(s)
+
         return s_pass, g_pass, smin
 
     def interchange_eig(
