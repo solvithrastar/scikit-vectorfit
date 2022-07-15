@@ -837,6 +837,8 @@ class VectorFitting:
                 # i: row index
                 # j: column index
                 i_response = i * n_ports + j
+                print(f"{i_response=}")
+                print(f"{self.residues=}")
 
                 j_residues = 0
                 for zero in self.residues[i_response]:
@@ -1075,23 +1077,26 @@ class VectorFitting:
             Chat = C @ Ahat
             Dhat = D - C @ Ahat @ B
             A, B, C, D = Ahat, Bhat, Chat, Dhat
-        D_inv = np.linalg.inv(D)
-        bdc_a = B @ D_inv @ C - A
-        S1 = A @ bdc_a
+        # D_inv = np.linalg.inv(D)
+        S1 = A @ (B @ np.linalg.inv(D) @ C - A)
+        # bdc_comp = np.matmul(A, np.matmul(B, np.matmul(np.linalg.inv(D), C) - A))
+        # S1 = A @ bdc_a
         # print(f"{D_inv=}")
         # print(f"{bdc_a=}")
-        # print(f"{S1=}")
+        # print(f"{bdc_comp=}")
+        # print(f"{bdc_a[0,1]=}")
+        print(f"{S1=}")
 
         wS1 = np.emath.sqrt(np.linalg.eigvals(S1))
-        # print(f"{wS1=}")
+        print(f"{wS1=}")
         if np.any(np.linalg.eig(Dcmplx) == 0):
             wS1 = 1 / wS1
         ind = np.where(np.imag(wS1) == 0, True, False)
-        wS1 = wS1[ind]
+        wS1 = wS1[ind].real
         sing_w = np.sort(wS1)
         if len(sing_w) == 0:
             return np.array(wintervals)
-        # print(f"{wS1=}")
+        print(f"{wS1=}")
         A, B, C, D = Acmplx, Bcmplx, Ccmplx, Dcmplx
 
         # Now we create a list of frequencies at midpoint of all the bands
@@ -1101,27 +1106,32 @@ class VectorFitting:
         mid_w[-1] = 2 * sing_w[-1]
         for k in range(len(sing_w) - 1):
             mid_w[k + 1] = (sing_w[k] + sing_w[k + 1]) / 2.0
+        print(f"{mid_w=}")
 
         # Checking passivity at all midpoints
         for k in range(len(mid_w)):
             sk = 1j * mid_w[k]
-            C = C * matlib.repmat((1.0 / (sk - self.poles)), 1, len(D))
-            G = np.real(C @ B + D)  # E is always zero in our situation
-            # print(f"{G=}")
+            # C = C * (1.0 / (sk - self.poles))
+            G = np.real(
+                (C * (1.0 / (sk - self.poles))) @ B + D
+            )  # E is always zero in our situation
             # print(f"{mid_w=}")
+            print(f"{G=}")
             # print(f"{sing_w=}")
-            # print(f"{C@B=}")
-            # print(f"{sk=}")
-            # print(f"{B=}")
-            # print(f"{D=}")
+            print(f"{C=}")
+            print(f"{sk=}")
+            print(f"{B=}")
+            print(f"{D=}")
             # print(f"{self.poles=}")
             # print(f"{self.poles.shape=}")
             EE = np.linalg.eigvals(G)
+            print(f"{EE=}")
             if np.any(EE < 0):
                 viol[k] = 1
             else:
                 viol[k] = 0
         # print(f"{viol=}")
+        print(f"{G=}")
         # Establishing intervals for passivity violations:
 
         # I think there might be weird stuff going on here.
@@ -1129,20 +1139,17 @@ class VectorFitting:
         for k in range(len(viol)):
             if viol[k] == 1:
                 if k == 0:
-                    intervals[0, :] = np.array([0, sing_w[0]]).T
+                    intervals[k, :] = np.array([0, sing_w[0]]).T
                 elif k == len(mid_w) - 1:
-                    intervals = np.concatenate(
+                    intervals[k, :] = np.concatenate(
                         intervals, np.array([sing_w[k - 1], 1e16]).T
                     )
                 else:
-                    intervals = np.concatenate(
-                        intervals, np.array([sing_w[k - 1], sing_w[k]]).T
-                    )
+                    intervals[k, :] = np.array([sing_w[k - 1], sing_w[k]]).T
 
         if len(intervals) == 0:
-            print("I exited here!")
             return np.array(wintervals)
-
+        print(f"{intervals=}")
         killindex = []
         for k in range(1, len(intervals)):
             if intervals[k - 1, 1] == intervals[k, 1]:  # An overlap exists
@@ -1486,10 +1493,12 @@ class VectorFitting:
         TOLGD = 1e-6
         # Outer loop
         iter_out = 0
-        niter_out = 10
+        niter_out = 2
         niter_in = 2
         break_outer = False
         s = 1j * 2 * np.pi * self.network.f  # Look at potential scaling here as in VF
+        print(f"{s=}")
+        print(f"{self.network.f=}")
         while iter_out <= niter_out:
             if break_outer:
                 break
@@ -1519,6 +1528,8 @@ class VectorFitting:
                 C1, D1 = self.FRPY(
                     A0, B0, C0, D0, s, s2, s3
                 )  # Need to work on the output of that function there
+                print(f"{C0=}")
+                print(f"{C0.shape=}")
                 # Here I need to update the residues ad poles and such
                 # before going on and checking the passivity again
                 self.residues = C1.copy().astype(complex)
@@ -1777,6 +1788,7 @@ class VectorFitting:
             Y = D + np.sum(np.squeeze(C[0]) / (sk - self.poles))
 
             Z, eigvec = np.linalg.eig(np.real(Y))
+            print(f"Eig of real Y: {Z=}")
             # EE[k] = np.real(Z)
             # Q = np.zeros_like(Y)
             if np.min(np.real(Z)) < 0:  # Any violations
@@ -1984,13 +1996,14 @@ class VectorFitting:
                 R2new = R2 + GAMM2 @ D2 @ invGAMM2
                 Cnew[:, m] = R1new + 1j * R2new
                 Cnew[:, m + 1] = R1new - 1j * R2new
+            print(f"{D1=}")
         if Dflag:
             if isinstance(dx[m], float):
                 DD = dx[m]
                 # print(f"{bigV[m]=}")
                 # print(f"{biginvV[m]=}")
                 # print(f"{bigV[m] * D1 * biginvV[m]=}")
-                Dnew = Cnew + VD * D1 * invVD
+                Dnew = Dnew + VD * D1 * invVD
             else:
                 DD = np.diag(dx[N])
                 Dnew = Dnew + VD @ DD @ invVD
@@ -1998,6 +2011,7 @@ class VectorFitting:
             Dnew = (Dnew + Dnew.T) / 2
         for m in range(N):
             Cnew[:, m] = (Cnew[:, m] + Cnew[:, m].T) / 2
+        print(f"Cnew is the same as C old: {np.all(Cnew == C)}")
         # Now it's a question of what the hell to return. Probably all the new ABCD matrices or something like that and then recompute poles based on them.
 
         # Ok let's figure out the output now
@@ -2029,6 +2043,10 @@ class VectorFitting:
         Nc = len(D)
         g_pass = 1e16
         smin = 0
+        print(f"{A=}")
+        print(f"{B=}")
+        print(f"{C=}")
+        print(f"{D=}")
 
         for m in range(len(violation_bands)):
             Nint = 21  # number of internal frequency samples resolving each interval
@@ -2039,13 +2057,16 @@ class VectorFitting:
                 )  # expressing endless angular frequency (feels pointless)
             else:
                 w2 = violation_bands[m, 1]
+            print(f"{w1=}")
+            print(f"{w2=}")
+
             s_pass1 = 1j * np.linspace(w1, w2, Nint)
             if w1 == 0:
                 s_pass2 = 1j * np.logspace(-8, np.log10(w2), Nint)
             else:
                 s_pass2 = 1j * np.logspace(np.log10(w1), np.log10(w2), Nint)
             s_pass = np.sort_complex(np.concatenate((s_pass1, s_pass2), axis=0))
-            # print(f"{s_pass.shape=}")
+            print(f"{s_pass2=}")
             Nint *= 2
             EE = np.zeros((1, Nint))
             # I still need to make sure that the poles change
@@ -2058,14 +2079,15 @@ class VectorFitting:
                 # print(f"{C=}")
                 # print(f"{Y.shape=}")
                 # print(f"{G.shape=}")
-                # print(f"{G=}")
-                # print(f"{T0.shape=}")
+                print(f"{G=}")
+                print(f"{T0=}, {EV=}")
                 if k == 0:
                     old_T0 = np.zeros_like(T0)
                 # T0 = self.rot(T0)
                 # T0, EV = self.interchange_eig(T0, old_T0, EV, Nc, k)
                 old_T0 = T0
                 EE[:, k] = np.diag(EV)
+            print(f"{EE=}")
 
             # Identifying violations, picking minima for s2
             s_pass_ind = np.zeros(shape=(len(s_pass)))
