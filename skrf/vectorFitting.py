@@ -1,6 +1,7 @@
 import numpy as np
 import os
 from numpy import matlib, squeeze
+import pdb
 
 # imports for type hinting
 from typing import Any, Tuple, TYPE_CHECKING
@@ -204,7 +205,6 @@ class VectorFitting:
         """
 
         timer_start = timer()
-        print("Im on the right branch!")
 
         # create initial poles and space them across the frequencies in the provided Touchstone file
         # use normalized frequencies during the iterations (seems to be more stable during least-squares fit)
@@ -837,8 +837,6 @@ class VectorFitting:
                 # i: row index
                 # j: column index
                 i_response = i * n_ports + j
-                print(f"{i_response=}")
-                print(f"{self.residues=}")
 
                 j_residues = 0
                 for zero in self.residues[i_response]:
@@ -1070,7 +1068,6 @@ class VectorFitting:
         )  # Need to understand a bit better what's going on here.
         # Not sure about the real vs positive aspects of everything there
         # The Matlab code converts to real only at some point. I need to look into that
-        # print(f"{np.linalg.eigvals(D)=}")
         if np.sum(np.linalg.eigvals(D) == 0) > 0:
             Ahat = np.linalg.inv(A)
             Bhat = -Ahat @ B
@@ -1081,14 +1078,8 @@ class VectorFitting:
         S1 = A @ (B @ np.linalg.inv(D) @ C - A)
         # bdc_comp = np.matmul(A, np.matmul(B, np.matmul(np.linalg.inv(D), C) - A))
         # S1 = A @ bdc_a
-        # print(f"{D_inv=}")
-        # print(f"{bdc_a=}")
-        # print(f"{bdc_comp=}")
-        # print(f"{bdc_a[0,1]=}")
-        print(f"{S1=}")
 
         wS1 = np.emath.sqrt(np.linalg.eigvals(S1))
-        print(f"{wS1=}")
         if np.any(np.linalg.eig(Dcmplx) == 0):
             wS1 = 1 / wS1
         ind = np.where(np.imag(wS1) == 0, True, False)
@@ -1096,7 +1087,6 @@ class VectorFitting:
         sing_w = np.sort(wS1)
         if len(sing_w) == 0:
             return np.array(wintervals)
-        print(f"{wS1=}")
         A, B, C, D = Acmplx, Bcmplx, Ccmplx, Dcmplx
 
         # Now we create a list of frequencies at midpoint of all the bands
@@ -1106,7 +1096,6 @@ class VectorFitting:
         mid_w[-1] = 2 * sing_w[-1]
         for k in range(len(sing_w) - 1):
             mid_w[k + 1] = (sing_w[k] + sing_w[k + 1]) / 2.0
-        print(f"{mid_w=}")
 
         # Checking passivity at all midpoints
         for k in range(len(mid_w)):
@@ -1115,23 +1104,11 @@ class VectorFitting:
             G = np.real(
                 (C * (1.0 / (sk - self.poles))) @ B + D
             )  # E is always zero in our situation
-            # print(f"{mid_w=}")
-            print(f"{G=}")
-            # print(f"{sing_w=}")
-            print(f"{C=}")
-            print(f"{sk=}")
-            print(f"{B=}")
-            print(f"{D=}")
-            # print(f"{self.poles=}")
-            # print(f"{self.poles.shape=}")
             EE = np.linalg.eigvals(G)
-            print(f"{EE=}")
             if np.any(EE < 0):
                 viol[k] = 1
             else:
                 viol[k] = 0
-        # print(f"{viol=}")
-        print(f"{G=}")
         # Establishing intervals for passivity violations:
 
         # I think there might be weird stuff going on here.
@@ -1149,7 +1126,6 @@ class VectorFitting:
 
         if len(intervals) == 0:
             return np.array(wintervals)
-        print(f"{intervals=}")
         killindex = []
         for k in range(1, len(intervals)):
             if intervals[k - 1, 1] == intervals[k, 1]:  # An overlap exists
@@ -1493,22 +1469,18 @@ class VectorFitting:
         TOLGD = 1e-6
         # Outer loop
         iter_out = 0
-        niter_out = 2
+        niter_out = 10
         niter_in = 2
         break_outer = False
         s = 1j * 2 * np.pi * self.network.f  # Look at potential scaling here as in VF
-        print(f"{s=}")
-        print(f"{self.network.f=}")
         while iter_out <= niter_out:
             if break_outer:
                 break
             s3 = []
             for iter_in in range(niter_in):
-                print(f"{iter_in=}")
                 s2 = []
                 if iter_in == 0:
                     violation_bands = self.passivity_test(parameter_type="y")
-                    print(f"{violation_bands=}")
                     if len(violation_bands) == 0 and np.all(np.linalg.eigvals(D1) >= 0):
                         break_outer = True
                         break
@@ -1517,19 +1489,13 @@ class VectorFitting:
                     # So we need to find the lowest eigenvalue within each violating interval
                     # and bring it up above zero.
                     s_viol, g_pass, ss = self.violextrema(violation_bands)
-                    print(f"Shape of s_viol: {s_viol.shape}")
-                    print(f"{s_viol=}")
                     s2 = np.sort(s_viol)
-                    print(f"{s2=}")
-                    print(f"{np.linalg.eigvals(D1)=}")
                     if len(s2) == 0 and np.all(np.linalg.eigvals(D1) > 0):
                         break
 
                 C1, D1 = self.FRPY(
                     A0, B0, C0, D0, s, s2, s3
                 )  # Need to work on the output of that function there
-                print(f"{C0=}")
-                print(f"{C0.shape=}")
                 # Here I need to update the residues ad poles and such
                 # before going on and checking the passivity again
                 self.residues = C1.copy().astype(complex)
@@ -1544,10 +1510,14 @@ class VectorFitting:
                     )  # Now what´s this for?
                     s_viol, g_pass, ss = self.violextrema(wintervals)
                     olds3 = s3  # And what´s this for?
+                    # pdb.set_trace()
                     if len(s3) == 0:
-                        s3 = np.vstack(
-                            (s2, s_viol.T)
-                        )  # This stuff looks a bit weird but I´ll take a look later
+                        if len(s_viol) == 0:
+                            s3 = s2.copy()
+                        else:
+                            s3 = np.vstack(
+                                (s2, s_viol.T)
+                            )  # This stuff looks a bit weird but I´ll take a look later
                     else:
                         s3 = np.vstack((s3, s2, s_viol.T))
 
@@ -1559,7 +1529,6 @@ class VectorFitting:
                     # And then another one after the whole thing.
 
             iter_out += 1
-            print(f"{iter_out=}")
 
         # Convert to real-only state-space if requested, Does not seem to be the case in the Boris code so no need for that now
         # I need to make sure that the self.poles and all of that stuff is updated accordingly. I can look at the vector fitting part.
@@ -1618,25 +1587,21 @@ class VectorFitting:
                         cindex[m] = 2
 
         if Dflag:
-            bigA = np.zeros((Ns, (N + 1)))
+            bigA = np.zeros((Ns, (N + 1)), dtype=complex)
         else:
-            bigA = np.zeros((Ns, N))
+            bigA = np.zeros((Ns, N), dtype=complex)
         bigV = np.zeros((1, N))
         biginvV = np.zeros((1, N))
         bigD = np.zeros((1, N))
-        # print(f"{C.shape=}")
-        # print(f"{C=}")
         for m in range(N):
             # Is the C matrix really that big? In matlab it is at least, takes in network. At least sometimes it is. Kindof weird actually
-            R = C[:, m]
+            R = C[:, m].copy()
             if cindex[m] == 0:
                 R = R
             elif cindex[m] == 1:
                 R = np.real(R)
             else:
                 R = np.imag(R)
-            # print(f"{R.shape=}")
-            # print(f"{R=}")
             if len(R) == 1:
                 D_val, V = R, 1
             else:
@@ -1655,14 +1620,12 @@ class VectorFitting:
             Yfit = self.fitcalcPRE(sk, C, D)
 
             weight = 1 / np.abs(Yfit[0])
-            # print(f"{weight[0]=}")
 
             # I really need to look at this SERA business versus the poles that I have
             # it doesn't seem to make too much sense
 
             for m in range(N):
                 V = np.squeeze(bigV[:, m])
-                # print(f"{V=}")
                 if V == 1:
                     invV = 1
                 else:
@@ -1678,7 +1641,6 @@ class VectorFitting:
                     gamm = V
                 else:
                     gamm = V @ invV
-                # print(f"{gamm * weight * dum=}")
                 # if cindex[m] == 0:
                 # I removed the if statement from matlab as it didn't make a difference
                 Mmat[offs] = gamm * weight * dum
@@ -1700,25 +1662,25 @@ class VectorFitting:
         # There is a rogue j here which  I can not explain in the matlab code
         # I'll define it as 1 here and go on.
         # I think it might actually be the imaginary unit although I find it odd.
-        s4 = []
+        s4 = np.zeros(len(self.poles), dtype=complex)
         tell = 0
         for m in range(len(self.poles)):
             if cindex[m] == 0:
                 if (np.abs(self.poles[m]) > s[Ns - 1] / 1) or (
                     np.abs(self.poles[m]) < s[0] / 1j
                 ):
-                    s4.append(1j * np.abs(self.poles[m]))
+                    s4[m] = 1j * np.abs(self.poles[m])
                     tell += 1
             elif cindex[m] == 1:
                 if (
                     np.abs(np.imag(self.poles[m]) > s[Ns - 1] / 1j)
                     or np.abs(np.imag(self.poles[m])) < s[0] / 1j
                 ):
-                    s4.append(1j * np.abs(np.imag(self.poles[m])))
+                    s4[m] = 1j * np.abs(np.imag(self.poles[m]))
                     tell += 1
         Ns4 = len(s4)
 
-        bigA2 = np.zeros((Ns4, (N + Dflag)))
+        bigA2 = np.zeros((Ns4, (N + Dflag)), dtype=complex)
         weightfactor = 1e-3  # Weightfactor for out of band frequencies
         for k in range(Ns4):
             sk = s4[k]
@@ -1729,9 +1691,7 @@ class VectorFitting:
             weight = weight * weightfactor
 
             for m in range(N):
-                # print(f"{bigV=}")
                 V = np.squeeze(bigV[:, m])  # Let's hope this makes sense
-                # print(f"{V=}")
                 if V == 1:
                     invV = 1
                 else:
@@ -1758,11 +1718,9 @@ class VectorFitting:
                 else:
                     gamm = VD @ invVD
                 Mmat[offs] = gamm * weight
-            # print(f"{Mmat=}")
-            # print(f"{bigA2.shape=}")
             bigA2[k, :] = Mmat
+
         bigA = np.vstack((bigA, bigA2))
-        # print(f"{bigA.shape=}")
 
         bigA = np.vstack((np.real(bigA), np.imag(bigA)))
         Acol = len(bigA[0, :])
@@ -1770,7 +1728,6 @@ class VectorFitting:
         for col in range(Acol):
             Escale[col] = np.linalg.norm(bigA[:, col], ord=2)
             bigA[:, col] = bigA[:, col] / Escale[col]
-        # print(f"{bigA=}")
         H = bigA.T @ bigA
 
         Mmat2 = np.zeros((N + Dflag), dtype=complex)
@@ -1778,17 +1735,12 @@ class VectorFitting:
         viol_D = []
         viol_E = []
         # EE = np.zeros(Ns2)   Don't think this is used ever
-        # print(f"{Ns2=}")
-        # print(f"{bigA.shape=}")
-        # print(f"{Mmat=}")
-        # print(f"{s2=}")
         # Loop for constraint problem, type 1 (violating eigenvalues in s2)
         for k in range(Ns2):
             sk = s2[k]
             Y = D + np.sum(np.squeeze(C[0]) / (sk - self.poles))
 
             Z, eigvec = np.linalg.eig(np.real(Y))
-            print(f"Eig of real Y: {Z=}")
             # EE[k] = np.real(Z)
             # Q = np.zeros_like(Y)
             if np.min(np.real(Z)) < 0:  # Any violations
@@ -1800,7 +1752,6 @@ class VectorFitting:
                         gamm = VV
                     else:
                         gamm = VV @ invVV
-                    # print(f"{gamm=}")
                     if cindex[m] == 0:
                         Mmat2[offs] = gamm / (sk - self.poles[m])
                     elif cindex[m] == 1:
@@ -1812,7 +1763,6 @@ class VectorFitting:
                             1j / (sk - self.poles[m])
                             - 1j / (sk - np.conj(self.poles[m]))
                         )
-                    # print(f"{Mmat2=}")
                     offs += 1
                 if Dflag:
                     if VD == 1:
@@ -1826,31 +1776,26 @@ class VectorFitting:
                 qij = V1**2
                 Q = qij
                 if Q == 1:
-                    # print("This is where it's constructed")
                     B = Q * Mmat2
                 else:
                     B = Q @ Mmat2
-                # print(f"{B=}")
                 delz = np.real(Z)
                 if (
                     delz < 0
                 ):  # I need to figure out properly how to declare these matrices.
                     try:
                         bigB = np.vstack((bigB, B))
-                        # print("Managed with B")
                     except:
                         bigB = B.copy()
                     try:
-                        bigC = np.vstack((bigC, -TOL * delz))
-                        # print("Managed with C")
+                        bigC = np.vstack((bigC, -TOL + delz))
                     except:
-                        bigC = -TOL * delz.copy()
+                        bigC = -TOL + delz.copy()
                     # bigC.append(-TOL * delz)
                     viol_G.append(delz)
 
         # Loop for constraint problem (Type 2): all eigenvalues in s3
         Ns3 = len(s3)
-        # print(f"{Ns3=}")
         for k in range(Ns3):
             sk = s3[k]
             Y = D + np.sum(np.squeeze(C[0]) / (sk - self.poles))
@@ -1895,7 +1840,6 @@ class VectorFitting:
             qij = V1**2
             Q = qij
             if Q == 1:
-                # print("This is where it's constructed")
                 B = Q * Mmat2
             else:
                 B = Q @ Mmat2
@@ -1908,14 +1852,12 @@ class VectorFitting:
             if delz < 0:  # I need to figure out properly how to declare these matrices.
                 try:
                     bigB = np.vstack((bigB, B))
-                    # print("Managed with B")
                 except:
                     bigB = B.copy()
                 try:
-                    bigC = np.vstack((bigC, -TOL * delz))
-                    # print("Managed with C")
+                    bigC = np.vstack((bigC, -TOL + delz))
                 except:
-                    bigC = -TOL * delz.copy()
+                    bigC = -TOL + delz.copy()
                 viol_G.append(delz)
         if Dflag:
             if eigD < 0:
@@ -1923,14 +1865,12 @@ class VectorFitting:
                 dum[N] = 1
                 try:
                     bigB = np.vstack(bigB, dum)
-                    # print("Managed with B")
                 except:
                     bigB = dum.copy()
                 try:
-                    bigC = np.vstack((bigC, -TOL * delz))
-                    # print("Managed with C")
+                    bigC = np.vstack((bigC, -TOL + delz))
                 except:
-                    bigC = -TOL * delz.copy()
+                    bigC = -TOL + delz.copy()
                 viol_G.append(eigD)
                 viol_D.append(eigD)
 
@@ -1938,19 +1878,11 @@ class VectorFitting:
             return  # I need to return some values here
 
         ff = np.zeros(len(H))
-        # print(f"{bigB.shape=}")
-        # print(f"{bigC.shape=}")
-        # print(f"{H.shape=}")
-        # print(f"{ff.shape=}")
         if len(bigC) == 1:
             bigB = np.reshape(bigB, (len(bigB), 1))
         else:
             bigC = np.squeeze(bigC)
         bigB = np.real(bigB)
-        # print(f"{H.shape=}")
-        # print(f"{ff.shape=}")
-        # print(f"{bigB.shape=}")
-        # print(f"{bigC.shape=}")
         for col in range(len(H)):
             if len(bigB) > 0:
                 bigB[col] = bigB[col] / Escale[col]
@@ -1959,25 +1891,16 @@ class VectorFitting:
         # It looks like my bigB and bigC should not be this big. I wonder what it is. I think it relates to the input of the whole thing
         # The shape of the output looks good though.
 
-        dx, f, xu, iterations, lagrangian, iact = quadprog.solve_qp(H, ff, -bigB, bigC)
-        # print(f"Solving quadprog right now: {dx.shape=}")
+        dx, f, xu, iterations, lagrangian, iact = quadprog.solve_qp(H, ff, bigB, -bigC)
         dx = dx / Escale
         Cnew = C.copy()
         Dnew = D.copy()
         bigV = bigV[0]
         biginvV = biginvV[0]
-        # print(f"{bigV=}")
-        # print(f"{Cnew.shape=}")
         for m in range(N):
-            # print(f"{m=}")
-            # print(f"{dx[m]=}")
-            # print(f"{Cnew[:, m].shape=}")
             if cindex[m] == 0:
                 if isinstance(dx[m], float):
                     D1 = dx[m]
-                    # print(f"{bigV[m]=}")
-                    # print(f"{biginvV[m]=}")
-                    # print(f"{bigV[m] * D1 * biginvV[m]=}")
                     Cnew[:, m] = Cnew[:, m] + bigV[m] * D1 * biginvV[m]
                 else:
                     D1 = np.diag(np.array(dx[m]))
@@ -1996,13 +1919,9 @@ class VectorFitting:
                 R2new = R2 + GAMM2 @ D2 @ invGAMM2
                 Cnew[:, m] = R1new + 1j * R2new
                 Cnew[:, m + 1] = R1new - 1j * R2new
-            print(f"{D1=}")
         if Dflag:
             if isinstance(dx[m], float):
                 DD = dx[m]
-                # print(f"{bigV[m]=}")
-                # print(f"{biginvV[m]=}")
-                # print(f"{bigV[m] * D1 * biginvV[m]=}")
                 Dnew = Dnew + VD * D1 * invVD
             else:
                 DD = np.diag(dx[N])
@@ -2011,8 +1930,6 @@ class VectorFitting:
             Dnew = (Dnew + Dnew.T) / 2
         for m in range(N):
             Cnew[:, m] = (Cnew[:, m] + Cnew[:, m].T) / 2
-        print(f"Cnew is the same as C old: {np.all(Cnew == C)}")
-        # Now it's a question of what the hell to return. Probably all the new ABCD matrices or something like that and then recompute poles based on them.
 
         # Ok let's figure out the output now
         return Cnew, Dnew
@@ -2024,11 +1941,7 @@ class VectorFitting:
     def fitcalcPRE(self, sk, C, D):
         N = len(self.poles)
         # Y = D
-        # print(f"{C=}")
-        # print(f"{sk=}")
-        # print(f"{self.poles=}")
         Y = D + np.sum(C / (sk - self.poles))
-        # print(f"{Y=}")
         return Y
 
     def violextrema(self, violation_bands):
@@ -2043,10 +1956,6 @@ class VectorFitting:
         Nc = len(D)
         g_pass = 1e16
         smin = 0
-        print(f"{A=}")
-        print(f"{B=}")
-        print(f"{C=}")
-        print(f"{D=}")
 
         for m in range(len(violation_bands)):
             Nint = 21  # number of internal frequency samples resolving each interval
@@ -2057,8 +1966,6 @@ class VectorFitting:
                 )  # expressing endless angular frequency (feels pointless)
             else:
                 w2 = violation_bands[m, 1]
-            print(f"{w1=}")
-            print(f"{w2=}")
 
             s_pass1 = 1j * np.linspace(w1, w2, Nint)
             if w1 == 0:
@@ -2066,28 +1973,19 @@ class VectorFitting:
             else:
                 s_pass2 = 1j * np.logspace(np.log10(w1), np.log10(w2), Nint)
             s_pass = np.sort_complex(np.concatenate((s_pass1, s_pass2), axis=0))
-            print(f"{s_pass2=}")
             Nint *= 2
             EE = np.zeros((1, Nint))
             # I still need to make sure that the poles change
             for k in range(len(s_pass)):
-                C = C * matlib.repmat((1.0 / (s_pass[k] - self.poles)), 1, len(D))
-                Y = C @ B + D
+                Y = (C * (1.0 / (s_pass[k] - self.poles))) @ B + D
                 G = np.real(Y)
                 EV, T0 = np.linalg.eig(G)
-                # print(f"{C.shape=}")
-                # print(f"{C=}")
-                # print(f"{Y.shape=}")
-                # print(f"{G.shape=}")
-                print(f"{G=}")
-                print(f"{T0=}, {EV=}")
                 if k == 0:
                     old_T0 = np.zeros_like(T0)
                 # T0 = self.rot(T0)
                 # T0, EV = self.interchange_eig(T0, old_T0, EV, Nc, k)
                 old_T0 = T0
                 EE[:, k] = np.diag(EV)
-            print(f"{EE=}")
 
             # Identifying violations, picking minima for s2
             s_pass_ind = np.zeros(shape=(len(s_pass)))
@@ -2113,7 +2011,7 @@ class VectorFitting:
             dums = [smin, smin2]
             smin = dums[ind]
             g_pass = min(g_pass, np.min(np.min(EE)))
-        s_pass = np.array(s)
+        s_pass = np.array(s, dtype=complex)
 
         return s_pass, g_pass, smin
 
@@ -2159,7 +2057,6 @@ class VectorFitting:
         help = np.zeros(Nc)
         UGH = np.abs(np.real(old_T0.T @ T0))
         for i in range(Nc):
-            print(f"{UGH=}")
             ilargest = 0
             rlargest = 0
             for j in range(Nc):
@@ -2231,8 +2128,6 @@ class VectorFitting:
         :rtype: np.ndarray
         """
         Nc = len(vec)  # Always equal to one here
-        print(f"{Nc=}")
-        print(f"{vec.shape}")
         SA = np.zeros(Nc)
         SB = SA
         scale1 = np.zeros((1, Nc))
@@ -2702,7 +2597,6 @@ class VectorFitting:
             ax.set_ylabel(y_label)
             ax.legend(loc="best")
 
-            # only print title if a single response is shown
             if i_fit == 1:
                 ax.set_title("Response i={}, j={}".format(i, j))
 
