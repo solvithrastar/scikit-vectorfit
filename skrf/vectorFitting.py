@@ -1051,9 +1051,16 @@ class VectorFitting:
 
     def _passivity_test_y(self) -> np.ndarray:
         """
-        blabla, finish this later
+        Checks to see if the pole-residue model is passive (Does not add energy into the system).
+                            N       Rm
+                    Y(s) = SUM  (---------) + D
+                            m=1    (s-am)
+        The system Y(s) is passive if these conditions apply:
 
-        :return: _description_
+        - eig [RE(Y)] > 0 for all frequencies
+        - D needs to be positive definite
+
+        :return: An array with the frequency bands which violate the conditions
         :rtype: np.ndarray
         """
 
@@ -1437,7 +1444,9 @@ class VectorFitting:
 
     def passivity_enforce_y(self):
         """
-        Nope, not yet
+        Use the Fast residue perturbation technique to perturbe the eigenvalues
+        of D and the residues to find a passive model while minimizing the difference
+        between the initial pole-residue model and the final passive one.
         """
         # always run passivity test first; this will write 'self.violation_bands'
         if self.is_passive(parameter_type="y"):
@@ -1472,7 +1481,7 @@ class VectorFitting:
         niter_out = 10
         niter_in = 2
         break_outer = False
-        s = 1j * 2 * np.pi * self.network.f  # Look at potential scaling here as in VF
+        s = 1j * 2 * np.pi * self.network.f
         while iter_out <= niter_out:
             if break_outer:
                 break
@@ -1493,66 +1502,39 @@ class VectorFitting:
                     if len(s2) == 0 and np.all(np.linalg.eigvals(D1) > 0):
                         break
 
-                C1, D1 = self.FRPY(
-                    A0, B0, C0, D0, s, s2, s3
-                )  # Need to work on the output of that function there
-                # Here I need to update the residues ad poles and such
-                # before going on and checking the passivity again
+                C1, D1 = self.FRPY(A0, B0, C0, D0, s, s2, s3)
                 self.residues = C1.copy().astype(complex)
                 self.constant_coeff = D1.copy()
-                if (
-                    iter_in != niter_in - 1
-                ):  # Also need to work on the input parameters there
-                    # Yeah I need to figure out how to reset the poles and all that before the passivity test.
-                    # The FRPY is supposed to do the bulk of the work
-                    wintervals = self.passivity_test(
-                        parameter_type="y"
-                    )  # Now what´s this for?
+                if iter_in != niter_in - 1:
+                    wintervals = self.passivity_test(parameter_type="y")
                     s_viol, g_pass, ss = self.violextrema(wintervals)
-                    olds3 = s3  # And what´s this for?
-                    # pdb.set_trace()
+                    olds3 = s3
                     if len(s3) == 0:
                         if len(s_viol) == 0:
                             s3 = s2.copy()
                         else:
-                            s3 = np.vstack(
-                                (s2, s_viol.T)
-                            )  # This stuff looks a bit weird but I´ll take a look later
+                            s3 = np.vstack((s2, s_viol.T))
                     else:
                         s3 = np.vstack((s3, s2, s_viol.T))
 
                 if iter_in == niter_in - 1:
                     s3, s2 = [], []
                     C0, D0 = C1.copy(), D1.copy()
-                    # SER0 = SER1
-                    # This is really what I need to implement properly. A0,B0,C0,D0 = A1,B1,C1,D1 or something like that
-                    # And then another one after the whole thing.
 
             iter_out += 1
 
-        # Convert to real-only state-space if requested, Does not seem to be the case in the Boris code so no need for that now
-        # I need to make sure that the self.poles and all of that stuff is updated accordingly. I can look at the vector fitting part.
-
-        # I might need to reconsider some of my transposing of vectors and do something else. We´ll see
-        # What I need to improve here is input and output of the  FRPY function. But that should not be too hard to do
-
-    def FRPY(
-        self, A, B, C, D, s, s2, s3
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    def FRPY(self, A, B, C, D, s, s2, s3) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Function which modifies the elements in the ABCD to enforce passivity
+        Function which modifies the elements in the C and D to enforce passivity
         of Y-parameter model at frequency samples in s2 and s3, such that the perturbation
         of the model is minimized at samples in s.
 
-        :return: _description_
-        :rtype: Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+        :return: Updated C and D matrices
+        :rtype: Tuple[np.ndarray, np.ndarray]
         """
 
         Cnew, Dnew = C.copy(), D.copy()
-        N = len(self.poles)  # Maybe I need to do this for the transpose of A/poles
-        # Things are very confusing regarding SERA vs poles here. I'll have to take
-        # a deep dive with my matlab license
-        # This is very confusing as SERA = SER.poles in the matlab script, so maybe I need to change all the A-s here
+        N = len(self.poles)
 
         d = np.linalg.eigvals(D)
         if d < 0:
@@ -1562,8 +1544,6 @@ class VectorFitting:
         else:
             Dflag = False
 
-        # bigB = []
-        # bigC = []
         TOL = 1e-6
         Ns = len(s)
         Ns2 = len(s2)
@@ -1578,9 +1558,7 @@ class VectorFitting:
                 if m == 0:
                     cindex[m] = 1
                 else:
-                    if (
-                        cindex[m - 1] == 0 or cindex[m - 1] == 2
-                    ):  # Don´t quite understand these gimmicks
+                    if cindex[m - 1] == 0 or cindex[m - 1] == 2:
                         cindex[m] = 1
                         cindex[m + 1] = 2
                     else:
@@ -1594,7 +1572,6 @@ class VectorFitting:
         biginvV = np.zeros((1, N))
         bigD = np.zeros((1, N))
         for m in range(N):
-            # Is the C matrix really that big? In matlab it is at least, takes in network. At least sometimes it is. Kindof weird actually
             R = C[:, m].copy()
             if cindex[m] == 0:
                 R = R
@@ -1621,9 +1598,6 @@ class VectorFitting:
 
             weight = 1 / np.abs(Yfit[0])
 
-            # I really need to look at this SERA business versus the poles that I have
-            # it doesn't seem to make too much sense
-
             for m in range(N):
                 V = np.squeeze(bigV[:, m])
                 if V == 1:
@@ -1641,8 +1615,6 @@ class VectorFitting:
                     gamm = V
                 else:
                     gamm = V @ invV
-                # if cindex[m] == 0:
-                # I removed the if statement from matlab as it didn't make a difference
                 Mmat[offs] = gamm * weight * dum
                 offs += 1
 
@@ -1656,12 +1628,7 @@ class VectorFitting:
 
             bigA[k, :] = Mmat
 
-        # Ok finally out of that insane loop
-
         # Now we introduce samples outside LS region: One sample per pole (s4)
-        # There is a rogue j here which  I can not explain in the matlab code
-        # I'll define it as 1 here and go on.
-        # I think it might actually be the imaginary unit although I find it odd.
         s4 = np.zeros(len(self.poles), dtype=complex)
         tell = 0
         for m in range(len(self.poles)):
@@ -1691,7 +1658,7 @@ class VectorFitting:
             weight = weight * weightfactor
 
             for m in range(N):
-                V = np.squeeze(bigV[:, m])  # Let's hope this makes sense
+                V = np.squeeze(bigV[:, m])
                 if V == 1:
                     invV = 1
                 else:
@@ -1701,7 +1668,7 @@ class VectorFitting:
                 elif cindex[m] == 1:
                     dum = gamm * (
                         1 / (sk - self.poles[m]) + 1 / (sk - np.conj(self.poles[m]))
-                    )  # Still don't really get the transpose
+                    )
                 else:
                     dum = gamm * (
                         1j / (sk - self.poles[m]) - 1j / (sk - np.conj(self.poles[m]))
@@ -1733,16 +1700,13 @@ class VectorFitting:
         Mmat2 = np.zeros((N + Dflag), dtype=complex)
         viol_G = []
         viol_D = []
-        viol_E = []
-        # EE = np.zeros(Ns2)   Don't think this is used ever
         # Loop for constraint problem, type 1 (violating eigenvalues in s2)
         for k in range(Ns2):
             sk = s2[k]
             Y = D + np.sum(np.squeeze(C[0]) / (sk - self.poles))
 
             Z, eigvec = np.linalg.eig(np.real(Y))
-            # EE[k] = np.real(Z)
-            # Q = np.zeros_like(Y)
+
             if np.min(np.real(Z)) < 0:  # Any violations
                 offs = 0
                 for m in range(N):
@@ -1757,7 +1721,7 @@ class VectorFitting:
                     elif cindex[m] == 1:
                         Mmat2[offs] = gamm * (
                             1 / (sk - self.poles[m]) + 1 / (sk - np.conj(self.poles[m]))
-                        )  # Still don't really get the transpose
+                        )
                     else:
                         Mmat2[offs] = gamm * (
                             1j / (sk - self.poles[m])
@@ -1780,9 +1744,7 @@ class VectorFitting:
                 else:
                     B = Q @ Mmat2
                 delz = np.real(Z)
-                if (
-                    delz < 0
-                ):  # I need to figure out properly how to declare these matrices.
+                if delz < 0:
                     try:
                         bigB = np.vstack((bigB, B))
                     except:
@@ -1791,7 +1753,6 @@ class VectorFitting:
                         bigC = np.vstack((bigC, -TOL + delz))
                     except:
                         bigC = -TOL + delz.copy()
-                    # bigC.append(-TOL * delz)
                     viol_G.append(delz)
 
         # Loop for constraint problem (Type 2): all eigenvalues in s3
@@ -1801,7 +1762,6 @@ class VectorFitting:
             Y = D + np.sum(np.squeeze(C[0]) / (sk - self.poles))
 
             Z, eigvec = np.linalg.eig(np.real(Y))
-            # EE[:, k] = np.real(Z)
 
             tell = 0
             offs = 0
@@ -1813,13 +1773,12 @@ class VectorFitting:
                     gamm = VV
                 else:
                     gamm = VV @ invVV
-                # gamm = VV[:, 0] @ invVV[0, :]
                 if cindex[m] == 0:
                     Mmat2[offs] = gamm / (sk - self.poles[m])
                 elif cindex[m] == 1:
                     Mmat2[offs] = gamm * (
                         1 / (sk - self.poles[m]) + 1 / (sk - np.conj(self.poles[m]))
-                    )  # Still don't really get the transpose
+                    )
                 else:
                     Mmat2[offs] = gamm * (
                         1j / (sk - self.poles[m]) - 1j / (sk - np.conj(self.poles[m]))
@@ -1843,13 +1802,9 @@ class VectorFitting:
                 B = Q * Mmat2
             else:
                 B = Q @ Mmat2
-            # V1 = V
-            # qij = V1**2
-            # Q = qij
 
-            # B = Q @ Mmat2
             delz = np.real(Z)
-            if delz < 0:  # I need to figure out properly how to declare these matrices.
+            if delz < 0:
                 try:
                     bigB = np.vstack((bigB, B))
                 except:
@@ -1874,8 +1829,8 @@ class VectorFitting:
                 viol_G.append(eigD)
                 viol_D.append(eigD)
 
-        if len(bigB) == 0:  # Does this work for me in terms of my declaring practices?
-            return  # I need to return some values here
+        if len(bigB) == 0:
+            return Cnew, Dnew
 
         ff = np.zeros(len(H))
         if len(bigC) == 1:
@@ -1886,10 +1841,6 @@ class VectorFitting:
         for col in range(len(H)):
             if len(bigB) > 0:
                 bigB[col] = bigB[col] / Escale[col]
-
-        # Quadprog stuff, I have to find what the hell that is. Seems to be an internal matlab function.
-        # It looks like my bigB and bigC should not be this big. I wonder what it is. I think it relates to the input of the whole thing
-        # The shape of the output looks good though.
 
         dx, f, xu, iterations, lagrangian, iact = quadprog.solve_qp(H, ff, bigB, -bigC)
         dx = dx / Escale
@@ -1931,16 +1882,10 @@ class VectorFitting:
         for m in range(N):
             Cnew[:, m] = (Cnew[:, m] + Cnew[:, m].T) / 2
 
-        # Ok let's figure out the output now
         return Cnew, Dnew
 
-    # I'm pretty sure that this thing is assuming D and C having a different shape and I'll have to fix it
-    # It might actually be looking at a Network of length N, which then only has a length 1 for me
-    # So it's quite likely that I'll have to fix this when debugging
-    # I may also be misunderstanding the self.poles vs the A matrix
     def fitcalcPRE(self, sk, C, D):
         N = len(self.poles)
-        # Y = D
         Y = D + np.sum(C / (sk - self.poles))
         return Y
 
@@ -1975,15 +1920,13 @@ class VectorFitting:
             s_pass = np.sort_complex(np.concatenate((s_pass1, s_pass2), axis=0))
             Nint *= 2
             EE = np.zeros((1, Nint))
-            # I still need to make sure that the poles change
+
             for k in range(len(s_pass)):
                 Y = (C * (1.0 / (s_pass[k] - self.poles))) @ B + D
                 G = np.real(Y)
                 EV, T0 = np.linalg.eig(G)
                 if k == 0:
                     old_T0 = np.zeros_like(T0)
-                # T0 = self.rot(T0)
-                # T0, EV = self.interchange_eig(T0, old_T0, EV, Nc, k)
                 old_T0 = T0
                 EE[:, k] = np.diag(EV)
 
@@ -2014,180 +1957,6 @@ class VectorFitting:
         s_pass = np.array(s, dtype=complex)
 
         return s_pass, g_pass, smin
-
-    def interchange_eig(
-        self,
-        T0: np.ndarray,
-        old_T0: np.ndarray,
-        EV: np.ndarray,
-        Nc: int,
-        k: int,
-    ):
-        """
-        Interchanging eigenvectors and corresponding eigenvalues
-        so that they become smooth functions of frequency.
-        Considers the old eigenvectors one-by-one and finds out by
-        which of the new ones the largest dot product is attained
-
-        This function is very inefficient compared to what it could be
-        but I'll just implement it like this for now.
-
-
-        :param T0: Eigenvectors
-        :type T0: np.ndarray
-        :param old_T0: The old eigenvectors
-        :type old_T0: np.ndarray
-        :param EV: Eigenvalues. Maybe this needs to be a diagonal matrix but is a vector
-        :type EV: np.ndarray
-        :param Nc: Size of D matrix
-        :type Nc: int
-        :param k: frequency step
-        :type k: int
-        """
-
-        # I actually think this function might be utterly useless, but it also doesn´t
-        # really do any harm so it´s ok
-        if len(EV.shape) == 1:
-            EV = np.diag(EV)
-        if k == 0:
-            return T0, EV
-        dot = np.zeros(Nc)
-        ind = np.zeros(Nc)
-        taken = np.zeros(Nc)
-        help = np.zeros(Nc)
-        UGH = np.abs(np.real(old_T0.T @ T0))
-        for i in range(Nc):
-            ilargest = 0
-            rlargest = 0
-            for j in range(Nc):
-                dotprod = UGH[i, j]
-                if dotprod > rlargest:
-                    rlargest = np.abs(np.real(dotprod))
-                    ilargest = j
-            dot[i] = rlargest
-            ind[i] = i
-            taken[i] = 0
-
-        # Sorting inner products abs(realdel) in descending order
-        # I'm sure this can be done much more efficiently
-        for i in range(Nc):
-            for j in range(Nc - 1):
-                if dot(j) < dot(j + 1):
-                    help[0] = dot[j + 1]
-                    ihelp = ind[j + 1]
-                    dot[j + 1] = dot[j]
-                    ind[j + 1] = ind[j]
-                    dot[j] = help[0]
-                    ind[j] = ihelp
-
-        # Doing the interchange in a prioritized sequence
-        for l in range(Nc):
-            i = ind[l]
-            ilargest = 0
-            rlargest = 0
-            for j in range(Nc):
-                if taken[j] == 0:
-                    dotprod = UGH[i, j]
-                    if dotprod > rlargest:
-                        rlargest = np.abs(np.real(dotprod))
-                        ilargest = j
-
-            taken[i] = 1
-            help = T0[:, i]
-            T0[:, i] = T0[:, ilargest]
-            T0[:, ilargest] = help
-
-            help = EV[i, i]
-            EV[i, i] = EV[ilargest, ilargest]
-            EV[ilargest, ilargest] = help
-
-            dum = UGH[:, i]
-            UGH[:, i] = UGH[:, ilargest]
-            UGH[:, ilargest] = dum
-
-        # Finding out whether the direction of e-vectors are 180deg in error.
-        # It's done by comparing sign of dotproducts of e-vectors
-        # for new and old T0-matrices
-
-        for i in range(Nc):
-            dotprod = (
-                old_T0[:, i].T @ T0[:, i]
-            )  # The i is j in the matlab code but it feels wrong
-            if np.sign(np.real(dotprod)) < 0:
-                T0[:, i] = -T0[:, i]
-
-        return T0, EV
-
-    def rot(self, vec: np.ndarray) -> np.ndarray:
-        """
-        Rotate a vector with some elaborate goal
-
-        :param vec: Vector to rotate
-        :type vec: np.ndarray
-        :return: Rotated vector
-        :rtype: np.ndarray
-        """
-        Nc = len(vec)  # Always equal to one here
-        SA = np.zeros(Nc)
-        SB = SA
-        scale1 = np.zeros((1, Nc))
-        scale2 = np.zeros_like(scale1)
-        err1 = np.zeros_like(scale1)
-        err2 = np.zeros_like(scale1)
-        scale = np.zeros_like(scale1)
-        numerator = np.zeros(Nc)
-        denominator = np.zeros(Nc)
-        ang = np.zeros(Nc)
-
-        for col in range(Nc):
-            numerator[col] = 0.0
-            denominator[col] = 0.0
-            for j in range(Nc):
-                numerator[col] = numerator[col] + np.imag(vec[j, col]) * np.real(
-                    vec[j, col]
-                )
-                denominator[col] = (
-                    denominator[col]
-                    + np.real(vec[j, col]) ** 2
-                    - np.imag(vec[j, col]) ** 2
-                )
-
-            numerator[col] *= -2.0
-            ang[col] = 0.5 * np.arctan2(numerator[col], denominator[col])
-            scale1[col] = np.cos(ang[col]) + 1j * np.sin(ang[col] + np.pi / 2)
-
-            aaa, bbb, ccc = 0.0, 0.0, 0.0
-            ddd, eee, ggg = 0.0, 0.0, 0.0
-            for j in range(Nc):
-                SA[j, col] = vec[j, col] * scale1[col]
-                SB[j, col] = vec[j, col] * scale2[col]
-
-                aaa = aaa + np.imag(SA[j, col]) ** 2
-                bbb = bbb + np.real(SA[j, col]) * np.imag(SA[j, col])
-                ccc = ccc + np.real(SA[j, col]) ** 2
-                ddd = ddd + np.imag(SB[j, col]) ** 2
-                eee = eee + np.real(SB[j, col]) * np.imag(SB[j, col])
-                ggg = ggg + np.real(SB[j, col]) ** 2
-
-            err1[col] = (
-                aaa * np.cos(ang[col]) ** 2
-                + bbb * np.sin(2.0 * ang[col])
-                + ccc * np.sin(ang[col]) ** 2
-            )
-
-            err2[col] = (
-                ddd * np.cos(ang[col]) ** 2
-                + eee * np.sin(2.0 * ang[col])
-                + ggg * np.sin(ang[col]) ** 2
-            )
-
-            if err1[col] < err2[col]:
-                scale[col] = scale1[col]
-            else:
-                scale[col] = scale2[col]
-
-            vec[:, col] = vec[:, col] * scale[col]
-        return vec
 
     def write_npz(self, path: str) -> None:
         """
