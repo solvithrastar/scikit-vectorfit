@@ -151,6 +151,18 @@ class VectorFitting:
         )
         self.residues = value
 
+    @property
+    def all_poles(self):
+        all_poles = []
+        if self.poles is not None:
+            for pole in self.poles:
+                if np.imag(pole) == 0:
+                    all_poles.append(pole)
+                else:
+                    all_poles.append(pole)
+                    all_poles.append(np.conj(pole))
+        return np.asarray(all_poles, dtype=complex)
+
     def vector_fit(
         self,
         n_poles_real: int = 2,
@@ -1105,11 +1117,12 @@ class VectorFitting:
             mid_w[k + 1] = (sing_w[k] + sing_w[k + 1]) / 2.0
 
         # Checking passivity at all midpoints
+
         for k in range(len(mid_w)):
             sk = 1j * mid_w[k]
             # C = C * (1.0 / (sk - self.poles))
             G = np.real(
-                (C * (1.0 / (sk - self.poles))) @ B + D
+                (C * (1.0 / (sk - self.all_poles))) @ B + D
             )  # E is always zero in our situation
             EE = np.linalg.eigvals(G)
             if np.any(EE < 0):
@@ -1605,11 +1618,15 @@ class VectorFitting:
                 else:
                     invV = np.linalg.inv(V)
                 if cindex[m] == 0:
-                    dum = 1 / (sk - self.poles[m])
+                    dum = 1 / (sk - self.all_poles[m])
                 elif cindex[m] == 1:
-                    dum = 1 / (sk - self.poles[m]) + 1 / (sk - np.conj(self.poles[m]))
+                    dum = 1 / (sk - self.all_poles[m]) + 1 / (
+                        sk - np.conj(self.all_poles[m])
+                    )
                 else:
-                    dum = 1j / (sk - self.poles[m]) - 1j / (sk - np.conj(self.poles[m]))
+                    dum = 1j / (sk - self.all_poles[m]) - 1j / (
+                        sk - np.conj(self.all_poles[m])
+                    )
 
                 if V == 1:
                     gamm = V
@@ -1629,21 +1646,21 @@ class VectorFitting:
             bigA[k, :] = Mmat
 
         # Now we introduce samples outside LS region: One sample per pole (s4)
-        s4 = np.zeros(len(self.poles), dtype=complex)
+        s4 = np.zeros(len(self.all_poles), dtype=complex)
         tell = 0
-        for m in range(len(self.poles)):
+        for m in range(len(self.all_poles)):
             if cindex[m] == 0:
-                if (np.abs(self.poles[m]) > s[Ns - 1] / 1) or (
-                    np.abs(self.poles[m]) < s[0] / 1j
+                if (np.abs(self.all_poles[m]) > s[Ns - 1] / 1) or (
+                    np.abs(self.all_poles[m]) < s[0] / 1j
                 ):
-                    s4[m] = 1j * np.abs(self.poles[m])
+                    s4[m] = 1j * np.abs(self.all_poles[m])
                     tell += 1
             elif cindex[m] == 1:
                 if (
-                    np.abs(np.imag(self.poles[m]) > s[Ns - 1] / 1j)
-                    or np.abs(np.imag(self.poles[m])) < s[0] / 1j
+                    np.abs(np.imag(self.all_poles[m]) > s[Ns - 1] / 1j)
+                    or np.abs(np.imag(self.all_poles[m])) < s[0] / 1j
                 ):
-                    s4[m] = 1j * np.abs(np.imag(self.poles[m]))
+                    s4[m] = 1j * np.abs(np.imag(self.all_poles[m]))
                     tell += 1
         Ns4 = len(s4)
 
@@ -1664,14 +1681,16 @@ class VectorFitting:
                 else:
                     invV = np.linalg.inv(V)
                 if cindex[m] == 0:
-                    dum = gamm / (sk - self.poles[m])
+                    dum = gamm / (sk - self.all_poles[m])
                 elif cindex[m] == 1:
                     dum = gamm * (
-                        1 / (sk - self.poles[m]) + 1 / (sk - np.conj(self.poles[m]))
+                        1 / (sk - self.all_poles[m])
+                        + 1 / (sk - np.conj(self.all_poles[m]))
                     )
                 else:
                     dum = gamm * (
-                        1j / (sk - self.poles[m]) - 1j / (sk - np.conj(self.poles[m]))
+                        1j / (sk - self.all_poles[m])
+                        - 1j / (sk - np.conj(self.all_poles[m]))
                     )
                 if V == 1:
                     gamm = V
@@ -1703,7 +1722,7 @@ class VectorFitting:
         # Loop for constraint problem, type 1 (violating eigenvalues in s2)
         for k in range(Ns2):
             sk = s2[k]
-            Y = D + np.sum(np.squeeze(C[0]) / (sk - self.poles))
+            Y = D + np.sum(np.squeeze(C[0]) / (sk - self.all_poles))
 
             Z, eigvec = np.linalg.eig(np.real(Y))
 
@@ -1717,15 +1736,16 @@ class VectorFitting:
                     else:
                         gamm = VV @ invVV
                     if cindex[m] == 0:
-                        Mmat2[offs] = gamm / (sk - self.poles[m])
+                        Mmat2[offs] = gamm / (sk - self.all_poles[m])
                     elif cindex[m] == 1:
                         Mmat2[offs] = gamm * (
-                            1 / (sk - self.poles[m]) + 1 / (sk - np.conj(self.poles[m]))
+                            1 / (sk - self.all_poles[m])
+                            + 1 / (sk - np.conj(self.all_poles[m]))
                         )
                     else:
                         Mmat2[offs] = gamm * (
-                            1j / (sk - self.poles[m])
-                            - 1j / (sk - np.conj(self.poles[m]))
+                            1j / (sk - self.all_poles[m])
+                            - 1j / (sk - np.conj(self.all_poles[m]))
                         )
                     offs += 1
                 if Dflag:
@@ -1759,7 +1779,7 @@ class VectorFitting:
         Ns3 = len(s3)
         for k in range(Ns3):
             sk = s3[k]
-            Y = D + np.sum(np.squeeze(C[0]) / (sk - self.poles))
+            Y = D + np.sum(np.squeeze(C[0]) / (sk - self.all_poles))
 
             Z, eigvec = np.linalg.eig(np.real(Y))
 
@@ -1774,14 +1794,16 @@ class VectorFitting:
                 else:
                     gamm = VV @ invVV
                 if cindex[m] == 0:
-                    Mmat2[offs] = gamm / (sk - self.poles[m])
+                    Mmat2[offs] = gamm / (sk - self.all_poles[m])
                 elif cindex[m] == 1:
                     Mmat2[offs] = gamm * (
-                        1 / (sk - self.poles[m]) + 1 / (sk - np.conj(self.poles[m]))
+                        1 / (sk - self.all_poles[m])
+                        + 1 / (sk - np.conj(self.all_poles[m]))
                     )
                 else:
                     Mmat2[offs] = gamm * (
-                        1j / (sk - self.poles[m]) - 1j / (sk - np.conj(self.poles[m]))
+                        1j / (sk - self.all_poles[m])
+                        - 1j / (sk - np.conj(self.all_poles[m]))
                     )
                 offs += 1
 
@@ -1886,7 +1908,7 @@ class VectorFitting:
 
     def fitcalcPRE(self, sk, C, D):
         N = len(self.poles)
-        Y = D + np.sum(C / (sk - self.poles))
+        Y = D + np.sum(C / (sk - self.all_poles))
         return Y
 
     def violextrema(self, violation_bands):
@@ -1922,7 +1944,7 @@ class VectorFitting:
             EE = np.zeros((1, Nint))
 
             for k in range(len(s_pass)):
-                Y = (C * (1.0 / (s_pass[k] - self.poles))) @ B + D
+                Y = (C * (1.0 / (s_pass[k] - self.all_poles))) @ B + D
                 G = np.real(Y)
                 EV, T0 = np.linalg.eig(G)
                 if k == 0:
