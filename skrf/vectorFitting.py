@@ -754,6 +754,7 @@ class VectorFitting:
 
     def _get_ABCDE(
         self,
+        for_passivity_enforcing=False,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
         Private method.
@@ -822,6 +823,33 @@ class VectorFitting:
         # assemble A = [[poles_real,   0,                  0],
         #               [0,            real(poles_cplx),   imag(poles_cplx],
         #               [0,            -imag(poles_cplx),  real(poles_cplx]]
+        if for_passivity_enforcing:
+            B = np.ones(shape=(n_matrix, n_ports))
+            A = np.identity(n_matrix, dtype=complex)
+            C = np.zeros(shape=(n_ports, n_matrix), dtype=complex)
+            D = np.zeros(shape=(n_ports, n_ports))
+            E = np.zeros(shape=(n_ports, n_ports))
+            i_A = 0
+            i_C = 0
+            for _i, pole in enumerate(self.poles):
+                if np.imag(pole) == 0.0:
+                    A[i_A, i_A] = pole
+                    C[0, i_C] = self.residues[0, _i]
+                    i_A += 1
+                    i_C += 1
+                else:
+                    A[i_A, i_A] = np.real(pole) + 1j * np.imag(pole)
+                    A[i_A + 1, i_A + 1] = np.real(pole) - 1j * np.imag(pole)
+                    C[0, i_C] = np.real(self.residues[0, _i]) + 1j * np.imag(
+                        self.residues[0, _i]
+                    )
+                    C[0, i_C + 1] = np.real(self.residues[0, _i]) - 1j * np.imag(
+                        self.residues[0, _i]
+                    )
+                    i_A += 2
+                    i_C += 2
+            D[0, 0] = self.constant_coeff[0]
+            return A, B, C, D, E
         A = np.identity(n_matrix)
         B = np.zeros(shape=(n_matrix, n_ports))
         i_A = 0  # index on diagonal of A
@@ -1078,7 +1106,7 @@ class VectorFitting:
 
         wintervals = []
         # Get State-Space model
-        A, B, C, D, _ = self._get_ABCDE()
+        A, B, C, D, _ = self._get_ABCDE(for_passivity_enforcing=False)
         Acmplx, Bcmplx, Ccmplx, Dcmplx = (
             A,
             B,
@@ -1094,6 +1122,7 @@ class VectorFitting:
             Dhat = D - C @ Ahat @ B
             A, B, C, D = Ahat, Bhat, Chat, Dhat
         # D_inv = np.linalg.inv(D)
+        # breakpoint()
         S1 = A @ (B @ np.linalg.inv(D) @ C - A)
         # bdc_comp = np.matmul(A, np.matmul(B, np.matmul(np.linalg.inv(D), C) - A))
         # S1 = A @ bdc_a
@@ -1106,8 +1135,8 @@ class VectorFitting:
         sing_w = np.sort(wS1)
         if len(sing_w) == 0:
             return np.array(wintervals)
-        A, B, C, D = Acmplx, Bcmplx, Ccmplx, Dcmplx
 
+        A, B, C, D, _ = self._get_ABCDE(for_passivity_enforcing=True)
         # Now we create a list of frequencies at midpoint of all the bands
         mid_w = np.zeros(len(sing_w) + 1)
         viol = np.zeros_like(mid_w)
@@ -1117,7 +1146,18 @@ class VectorFitting:
             mid_w[k + 1] = (sing_w[k] + sing_w[k + 1]) / 2.0
 
         # Checking passivity at all midpoints
-
+        # C_comp = np.zeros_like(C, dtype=complex)
+        # B_comp = np.ones_like(B)
+        # i = 0
+        # z = 0
+        # for pole in self.poles:
+        #     if np.imag(pole) == 0.0:
+        #         C_comp[i, z] = C[i, z]
+        #         z += 1
+        #     else:
+        #         C_comp[i, z] = C[i, z] + 1j * C[i, z + 1]
+        #         C_comp[i, z + 1] = C[i, z] - 1j * C[i, z + 1]
+        #         z += 2
         for k in range(len(mid_w)):
             sk = 1j * mid_w[k]
             # C = C * (1.0 / (sk - self.poles))
@@ -1133,16 +1173,19 @@ class VectorFitting:
 
         # I think there might be weird stuff going on here.
         intervals = np.zeros((len(np.nonzero(viol)[0]), 2))
-        for k in range(len(viol)):
+        count = 0
+        for k in range(len(mid_w)):
             if viol[k] == 1:
                 if k == 0:
-                    intervals[k, :] = np.array([0, sing_w[0]]).T
+                    intervals[count, :] = np.array([0, sing_w[0]]).T
                 elif k == len(mid_w) - 1:
-                    intervals[k, :] = np.concatenate(
-                        intervals, np.array([sing_w[k - 1], 1e16]).T
-                    )
+                    intervals[count, :] = np.array([sing_w[k - 1], 1e16])
+                    # intervals[count, :] = np.concatenate(
+                    #     intervals, np.array([sing_w[k - 1], 1e16]).T
+                    # )
                 else:
-                    intervals[k, :] = np.array([sing_w[k - 1], sing_w[k]]).T
+                    intervals[count, :] = np.array([sing_w[k - 1], sing_w[k]]).T
+                count += 1
 
         if len(intervals) == 0:
             return np.array(wintervals)
@@ -1473,7 +1516,7 @@ class VectorFitting:
         # 1) the highest frequency of passivity violation (f_viol_max)
         # or
         # 2) the highest fitting frequency (f_samples_max)
-        A0, B0, C0, D0, E0 = self._get_ABCDE()
+        A0, B0, C0, D0, E0 = self._get_ABCDE(for_passivity_enforcing=True)
         A1, B1, C1, D1, E1 = (
             np.copy(A0),
             np.copy(B0),
@@ -1514,21 +1557,35 @@ class VectorFitting:
                     s2 = np.sort(s_viol)
                     if len(s2) == 0 and np.all(np.linalg.eigvals(D1) > 0):
                         break
-
                 C1, D1 = self.FRPY(A0, B0, C0, D0, s, s2, s3)
-                self.residues = C1.copy().astype(complex)
+                k = 0
+                z = 0
+                flag = False
+                for pole in self.all_poles:
+                    if flag:
+                        flag = False
+                        continue
+                    if np.imag(pole) == 0.0:
+                        self.residues[0, z] = C1[0, k]
+                        k += 1
+                    else:
+                        self.residues[0, z] = np.real(C1[0, k]) + 1j * np.imag(C1[0, k])
+                        k += 2
+                        flag = True
+                    z += 1
+                # self.residues = C1.copy().astype(complex)
                 self.constant_coeff = D1.copy()
                 if iter_in != niter_in - 1:
                     wintervals = self.passivity_test(parameter_type="y")
                     s_viol, g_pass, ss = self.violextrema(wintervals)
                     olds3 = s3
                     if len(s3) == 0:
-                        if len(s_viol) == 0:
+                        if len(s_viol) == 0 or s_viol in s2:
                             s3 = s2.copy()
                         else:
-                            s3 = np.vstack((s2, s_viol.T))
+                            s3 = np.concatenate((s2, s_viol))
                     else:
-                        s3 = np.vstack((s3, s2, s_viol.T))
+                        s3 = np.concatenate((s3, s2, s_viol))
 
                 if iter_in == niter_in - 1:
                     s3, s2 = [], []
@@ -1547,7 +1604,7 @@ class VectorFitting:
         """
 
         Cnew, Dnew = C.copy(), D.copy()
-        N = len(self.poles)
+        N = len(self.all_poles)
 
         d = np.linalg.eigvals(D)
         if d < 0:
@@ -1563,11 +1620,11 @@ class VectorFitting:
         Nc = len(D)  # This is 1 in all my use cases
         Nc2 = Nc * Nc
         I = np.identity(Nc)
-        Mmat = np.zeros(N, dtype=complex)
+        Mmat = np.zeros(N + Dflag, dtype=complex)
 
         cindex = np.zeros(N)
         for m in range(N):
-            if np.imag(self.poles[m]) != 0:
+            if np.imag(self.all_poles[m]) != 0:
                 if m == 0:
                     cindex[m] = 1
                 else:
@@ -1577,10 +1634,7 @@ class VectorFitting:
                     else:
                         cindex[m] = 2
 
-        if Dflag:
-            bigA = np.zeros((Ns, (N + 1)), dtype=complex)
-        else:
-            bigA = np.zeros((Ns, N), dtype=complex)
+        bigA = np.zeros((Ns, (N + Dflag)), dtype=complex)
         bigV = np.zeros((1, N))
         biginvV = np.zeros((1, N))
         bigD = np.zeros((1, N))
@@ -1601,8 +1655,9 @@ class VectorFitting:
                 biginvV[0, m] = 1 / V
             else:
                 biginvV[0, m] = np.linalg.inv(V)
-            bigD[:, m] = D_val
 
+            bigD[:, m] = D_val
+        # breakpoint()
         for k in range(Ns):
             sk = s[k]
             tell = 0
@@ -1624,8 +1679,8 @@ class VectorFitting:
                         sk - np.conj(self.all_poles[m])
                     )
                 else:
-                    dum = 1j / (sk - self.all_poles[m]) - 1j / (
-                        sk - np.conj(self.all_poles[m])
+                    dum = 1j / (sk - np.conj(self.all_poles[m])) - 1j / (
+                        sk - self.all_poles[m]
                     )
 
                 if V == 1:
@@ -1641,30 +1696,30 @@ class VectorFitting:
                 else:
                     gamm = VD @ invV
                 gamm = VD @ invVD
-                Mmat[0, offs] = gamm * weight
-
+                Mmat[offs] = gamm * weight
             bigA[k, :] = Mmat
 
         # Now we introduce samples outside LS region: One sample per pole (s4)
-        s4 = np.zeros(len(self.all_poles), dtype=complex)
+        s4 = []
+        # s4 = np.zeros(len(self.all_poles), dtype=complex)
         tell = 0
         for m in range(len(self.all_poles)):
             if cindex[m] == 0:
-                if (np.abs(self.all_poles[m]) > s[Ns - 1] / 1) or (
+                if (np.abs(self.all_poles[m]) > s[Ns - 1] / 1j) or (
                     np.abs(self.all_poles[m]) < s[0] / 1j
                 ):
-                    s4[m] = 1j * np.abs(self.all_poles[m])
+                    s4.append(1j * np.abs(self.all_poles[m]))
                     tell += 1
             elif cindex[m] == 1:
                 if (
                     np.abs(np.imag(self.all_poles[m]) > s[Ns - 1] / 1j)
                     or np.abs(np.imag(self.all_poles[m])) < s[0] / 1j
                 ):
-                    s4[m] = 1j * np.abs(np.imag(self.all_poles[m]))
+                    s4.append(1j * np.abs(np.imag(self.all_poles[m])))
                     tell += 1
         Ns4 = len(s4)
 
-        bigA2 = np.zeros((Ns4, (N + Dflag)), dtype=complex)
+        bigA2 = np.empty((Ns4, (N + Dflag)), dtype=complex)
         weightfactor = 1e-3  # Weightfactor for out of band frequencies
         for k in range(Ns4):
             sk = s4[k]
@@ -1689,8 +1744,8 @@ class VectorFitting:
                     )
                 else:
                     dum = gamm * (
-                        1j / (sk - self.all_poles[m])
-                        - 1j / (sk - np.conj(self.all_poles[m]))
+                        1j / (sk - np.conj(self.all_poles[m]))
+                        - 1j / (sk - self.all_poles[m])
                     )
                 if V == 1:
                     gamm = V
@@ -1705,7 +1760,6 @@ class VectorFitting:
                     gamm = VD @ invVD
                 Mmat[offs] = gamm * weight
             bigA2[k, :] = Mmat
-
         bigA = np.vstack((bigA, bigA2))
 
         bigA = np.vstack((np.real(bigA), np.imag(bigA)))
@@ -1744,8 +1798,8 @@ class VectorFitting:
                         )
                     else:
                         Mmat2[offs] = gamm * (
-                            1j / (sk - self.all_poles[m])
-                            - 1j / (sk - np.conj(self.all_poles[m]))
+                            1j / (sk - np.conj(self.all_poles[m]))
+                            - 1j / (sk - self.all_poles[m])
                         )
                     offs += 1
                 if Dflag:
@@ -1753,6 +1807,7 @@ class VectorFitting:
                         gamm = VD
                     else:
                         gamm = VD @ invVD
+                    Mmat2[offs] = gamm
                 if V == 1:
                     V1 = 1
                 else:
@@ -1760,15 +1815,15 @@ class VectorFitting:
                 qij = V1**2
                 Q = qij
                 if Q == 1:
-                    B = Q * Mmat2
+                    BB = Q * Mmat2
                 else:
-                    B = Q @ Mmat2
+                    BB = Q @ Mmat2
                 delz = np.real(Z)
                 if delz < 0:
                     try:
-                        bigB = np.vstack((bigB, B))
+                        bigB = np.vstack((bigB, BB))
                     except:
-                        bigB = B.copy()
+                        bigB = BB.copy()
                     try:
                         bigC = np.vstack((bigC, -TOL + delz))
                     except:
@@ -1802,8 +1857,8 @@ class VectorFitting:
                     )
                 else:
                     Mmat2[offs] = gamm * (
-                        1j / (sk - self.all_poles[m])
-                        - 1j / (sk - np.conj(self.all_poles[m]))
+                        1j / (sk - np.conj(self.all_poles[m]))
+                        - 1j / (sk - self.all_poles[m])
                     )
                 offs += 1
 
@@ -1821,16 +1876,16 @@ class VectorFitting:
             qij = V1**2
             Q = qij
             if Q == 1:
-                B = Q * Mmat2
+                BB = Q * Mmat2
             else:
-                B = Q @ Mmat2
+                BB = Q @ Mmat2
 
             delz = np.real(Z)
             if delz < 0:
                 try:
-                    bigB = np.vstack((bigB, B))
+                    bigB = np.vstack((bigB, BB))
                 except:
-                    bigB = B.copy()
+                    bigB = BB.copy()
                 try:
                     bigC = np.vstack((bigC, -TOL + delz))
                 except:
@@ -1841,7 +1896,7 @@ class VectorFitting:
                 dum = np.zeros((N + Dflag))
                 dum[N] = 1
                 try:
-                    bigB = np.vstack(bigB, dum)
+                    bigB = np.vstack((bigB, dum))
                 except:
                     bigB = dum.copy()
                 try:
@@ -1853,12 +1908,11 @@ class VectorFitting:
 
         if len(bigB) == 0:
             return Cnew, Dnew
-
         ff = np.zeros(len(H))
-        if len(bigC) == 1:
-            bigB = np.reshape(bigB, (len(bigB), 1))
-        else:
+        bigB = np.reshape(bigB, (len(H), len(bigC)))
+        if len(bigC.shape) > 1:
             bigC = np.squeeze(bigC)
+
         bigB = np.real(bigB)
         for col in range(len(H)):
             if len(bigB) > 0:
@@ -1879,17 +1933,23 @@ class VectorFitting:
                     D1 = np.diag(np.array(dx[m]))
                     Cnew[:, m] = Cnew[:, m] + bigV[:, m] @ D1 @ biginvV[:, m]
             elif cindex[m] == 1:
-                GAMM1 = bigV[:, m]
-                GAMM2 = bigV[:, m + 1]
-                invGAMM1 = biginvV[:, m]
-                invGAMM2 = biginvV[:, (m + 1)]
+                GAMM1 = bigV[m]
+                GAMM2 = bigV[m + 1]
+                invGAMM1 = biginvV[m]
+                invGAMM2 = biginvV[(m + 1)]
 
-                D1 = np.diag(dx[m])
-                D2 = np.diag(dx[(m + 1)])
                 R1 = np.real(C[:, m])
                 R2 = np.imag(C[:, m])
-                R1new = R1 + GAMM1 @ D1 @ invGAMM1
-                R2new = R2 + GAMM2 @ D2 @ invGAMM2
+                if isinstance(dx[m], float):
+                    D1 = dx[m]
+                    D2 = dx[m + 1]
+                    R1new = R1 + GAMM1 * D1 * invGAMM1
+                    R2new = R2 + GAMM2 * D2 * invGAMM2
+                else:
+                    D1 = np.diag(np.array(dx[m]))
+                    D2 = np.diag(np.array(dx[m + 1]))
+                    R1new = R1 + GAMM1 @ D1 @ invGAMM1
+                    R2new = R2 + GAMM2 @ D2 @ invGAMM2
                 Cnew[:, m] = R1new + 1j * R2new
                 Cnew[:, m + 1] = R1new - 1j * R2new
         if Dflag:
@@ -1918,7 +1978,7 @@ class VectorFitting:
         s_pass = []
         g_pass = []
         ss = []
-        A, B, C, D, _ = self._get_ABCDE()
+        A, B, C, D, _ = self._get_ABCDE(for_passivity_enforcing=True)
         s = []
         Nc = len(D)
         g_pass = 1e16
@@ -1954,24 +2014,31 @@ class VectorFitting:
 
             # Identifying violations, picking minima for s2
             s_pass_ind = np.zeros(shape=(len(s_pass)))
+            if np.min(EE[0]) < 0.0:
+                s_pass_ind_2 = np.where(EE[0] == np.min(EE[0]))[0]
+            else:
+                s_pass_ind_2 = np.zeros(shape=(len(s_pass)))
+            if len(s_pass_ind_2) > 1:
+                s_pass_ind_2 = s_pass_ind_2[0]
 
-            for row in range(Nc):
-                if EE[row, 0] < 0:
-                    s_pass_ind[0] = 1
+            # for row in range(Nc):
+            #     if EE[row, 0] < 0:
+            #         s_pass_ind[0] = 1
 
-            for k in range(1, len(s_pass) - 1):
-                for row in range(Nc):
-                    if EE[row, k] < 0:  # Violation
-                        if EE[row, k] < EE[row, k - 1] and EE[row, k] < EE[row, k + 1]:
-                            s_pass_ind[k] = 1
+            # for k in range(1, len(s_pass) - 1):
+            #     for row in range(Nc):
+            #         if EE[row, k] < 0:  # Violation
+            #             if EE[row, k] < EE[row, k - 1] and EE[row, k] < EE[row, k + 1]:
+            #                 s_pass_ind[k] = 1
 
-            for s_p in s_pass[np.where(s_pass_ind == 1)[0]]:
-                s.append(s_p)
-            dum = np.min(EE, axis=0)
+            # for s_p in s_pass[np.where(s_pass_ind == 1)[0]]:
+            #     s.append(s_p)
+            s.append(s_pass[s_pass_ind_2])
+            dum = np.min(EE[0], axis=0)
             g_pass_2, ind = np.min(dum), np.where(dum == np.min(dum))[0][0]
             smin2 = s_pass[ind]  # Largest violation in interval
             g_pass_list = [g_pass, g_pass_2]
-            g_pass = min(g_pass_list)
+            g_pass = min(g_pass, g_pass_2)
             ind = g_pass_list.index(g_pass)
             dums = [smin, smin2]
             smin = dums[ind]
