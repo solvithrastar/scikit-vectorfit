@@ -1122,6 +1122,7 @@ class VectorFitting:
             Dhat = D - C @ Ahat @ B
             A, B, C, D = Ahat, Bhat, Chat, Dhat
         # D_inv = np.linalg.inv(D)
+        # breakpoint()
         S1 = A @ (B @ np.linalg.inv(D) @ C - A)
         # bdc_comp = np.matmul(A, np.matmul(B, np.matmul(np.linalg.inv(D), C) - A))
         # S1 = A @ bdc_a
@@ -1172,16 +1173,19 @@ class VectorFitting:
 
         # I think there might be weird stuff going on here.
         intervals = np.zeros((len(np.nonzero(viol)[0]), 2))
-        for k in range(len(viol)):
+        count = 0
+        for k in range(len(mid_w)):
             if viol[k] == 1:
                 if k == 0:
-                    intervals[k, :] = np.array([0, sing_w[0]]).T
+                    intervals[count, :] = np.array([0, sing_w[0]]).T
                 elif k == len(mid_w) - 1:
-                    intervals[k, :] = np.concatenate(
-                        intervals, np.array([sing_w[k - 1], 1e16]).T
-                    )
+                    intervals[count, :] = np.array([sing_w[k - 1], 1e16])
+                    # intervals[count, :] = np.concatenate(
+                    #     intervals, np.array([sing_w[k - 1], 1e16]).T
+                    # )
                 else:
-                    intervals[k, :] = np.array([sing_w[k - 1], sing_w[k]]).T
+                    intervals[count, :] = np.array([sing_w[k - 1], sing_w[k]]).T
+                count += 1
 
         if len(intervals) == 0:
             return np.array(wintervals)
@@ -1616,7 +1620,7 @@ class VectorFitting:
         Nc = len(D)  # This is 1 in all my use cases
         Nc2 = Nc * Nc
         I = np.identity(Nc)
-        Mmat = np.zeros(N, dtype=complex)
+        Mmat = np.zeros(N + Dflag, dtype=complex)
 
         cindex = np.zeros(N)
         for m in range(N):
@@ -1630,10 +1634,7 @@ class VectorFitting:
                     else:
                         cindex[m] = 2
 
-        if Dflag:
-            bigA = np.zeros((Ns, (N + 1)), dtype=complex)
-        else:
-            bigA = np.zeros((Ns, N), dtype=complex)
+        bigA = np.zeros((Ns, (N + Dflag)), dtype=complex)
         bigV = np.zeros((1, N))
         biginvV = np.zeros((1, N))
         bigD = np.zeros((1, N))
@@ -1695,7 +1696,7 @@ class VectorFitting:
                 else:
                     gamm = VD @ invV
                 gamm = VD @ invVD
-                Mmat[0, offs] = gamm * weight
+                Mmat[offs] = gamm * weight
             bigA[k, :] = Mmat
 
         # Now we introduce samples outside LS region: One sample per pole (s4)
@@ -1806,6 +1807,7 @@ class VectorFitting:
                         gamm = VD
                     else:
                         gamm = VD @ invVD
+                    Mmat2[offs] = gamm
                 if V == 1:
                     V1 = 1
                 else:
@@ -1894,7 +1896,7 @@ class VectorFitting:
                 dum = np.zeros((N + Dflag))
                 dum[N] = 1
                 try:
-                    bigB = np.vstack(bigB, dum)
+                    bigB = np.vstack((bigB, dum))
                 except:
                     bigB = dum.copy()
                 try:
@@ -1906,16 +1908,16 @@ class VectorFitting:
 
         if len(bigB) == 0:
             return Cnew, Dnew
-
         ff = np.zeros(len(H))
-        if len(bigC) == 1:
-            bigB = np.reshape(bigB, (len(bigB), 1))
-        else:
+        bigB = np.reshape(bigB, (len(H), len(bigC)))
+        if len(bigC.shape) > 1:
             bigC = np.squeeze(bigC)
+
         bigB = np.real(bigB)
         for col in range(len(H)):
             if len(bigB) > 0:
                 bigB[col] = bigB[col] / Escale[col]
+
         dx, f, xu, iterations, lagrangian, iact = quadprog.solve_qp(H, ff, bigB, -bigC)
         dx = dx / Escale
         Cnew = C.copy()
