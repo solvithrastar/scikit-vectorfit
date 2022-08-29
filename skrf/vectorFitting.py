@@ -1219,14 +1219,16 @@ class VectorFitting:
         # We can just sample through the frequency space and get a 01 array
 
         wintervals = []
-        freq = self.network.frequency
-        freqtest = np.linspace(0.0, max(freq) * 2, 200)
+        freq = self.network.f
+        freqtest = np.linspace(0.0, np.max(freq) * 2, 200)
         A, B, C, D, E = self._get_ABCDE()
 
         S = np.abs(self._get_s_from_ABCDE(freqs=freqtest, A=A, B=B, C=C, D=D, E=E))
         non_passive = np.where(S > 1.0)[0]
-        if len(non_passive) == 0:
+        if len(non_passive) == 0 and np.all(D < 1):
             return wintervals
+        elif len(non_passive) == 0 and np.any(D > 1):
+            return np.array([2 * np.pi * np.max(freq), 1e16])
 
         # Create the correct intervals where R is not passive
         # So I need to go through 'non_passive' and see when it contains
@@ -1693,7 +1695,11 @@ class VectorFitting:
         N = len(self.all_poles)
 
         d = np.linalg.eigvals(D)
-        if d < 0:
+        if parameter_type.lower() == "r":
+            violation = np.abs(d) > 1.0
+        else:
+            violation = d < 0
+        if violation:
             Dflag = True
             eigD, VD = np.linalg.eig(D)
             invVD = np.linalg.inv(VD)
