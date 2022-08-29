@@ -1373,8 +1373,8 @@ class VectorFitting:
             Based Macromodels," in IEEE Transactions on Microwave Theory and Techniques, vol. 57, no. 2, pp. 415-420,
             Feb. 2009, DOI: 10.1109/TMTT.2008.2011201.
         """
-        if parameter_type.lower() == "y":
-            self.passivity_enforce_y()
+        if parameter_type.lower() in ["y", "r"]:
+            self.passivity_enforce_y_or_r(parameter_type=parameter_type.lower())
             return
         if parameter_type.lower() != "s":
             raise NotImplementedError(
@@ -1574,14 +1574,14 @@ class VectorFitting:
                 stacklevel=2,
             )
 
-    def passivity_enforce_y(self, parameter_type="y"):
+    def passivity_enforce_y_or_r(self, parameter_type="y"):
         """
         Use the Fast residue perturbation technique to perturbe the eigenvalues
         of D and the residues to find a passive model while minimizing the difference
         between the initial pole-residue model and the final passive one.
         """
         # always run passivity test first; this will write 'self.violation_bands'
-        if self.is_passive(parameter_type="y"):
+        if self.is_passive(parameter_type=parameter_type):
             # model is already passive; do nothing and return
             logging.info(
                 "Passivity enforcement: The model is already passive. Nothing to do."
@@ -1621,7 +1621,7 @@ class VectorFitting:
             for iter_in in range(niter_in):
                 s2 = []
                 if iter_in == 0:
-                    violation_bands = self.passivity_test(parameter_type="y")
+                    violation_bands = self.passivity_test(parameter_type=parameter_type)
                     if len(violation_bands) == 0 and np.all(np.linalg.eigvals(D1) >= 0):
                         break_outer = True
                         break
@@ -1637,7 +1637,9 @@ class VectorFitting:
                     else:
                         if len(s2) == 0 and np.all(np.linalg.eigvals(D1) > 0):
                             break
-                C1, D1 = self.FRPY(A0, B0, C0, D0, s, s2, s3)
+                C1, D1 = self.FRPY(
+                    A0, B0, C0, D0, s, s2, s3, parameter_type=parameter_type
+                )
                 k = 0
                 z = 0
                 flag = False
@@ -1656,8 +1658,10 @@ class VectorFitting:
                 # self.residues = C1.copy().astype(complex)
                 self.constant_coeff = D1.copy()
                 if iter_in != niter_in - 1:
-                    wintervals = self.passivity_test(parameter_type="y")
-                    s_viol, g_pass, ss = self.violextrema(wintervals)
+                    wintervals = self.passivity_test(parameter_type=parameter_type)
+                    s_viol, g_pass, ss = self.violextrema(
+                        wintervals, parameter_type=parameter_type
+                    )
                     olds3 = s3
                     if len(s3) == 0:
                         if len(s_viol) == 0 or s_viol in s2:
@@ -1673,7 +1677,9 @@ class VectorFitting:
 
             iter_out += 1
 
-    def FRPY(self, A, B, C, D, s, s2, s3) -> Tuple[np.ndarray, np.ndarray]:
+    def FRPY(
+        self, A, B, C, D, s, s2, s3, parameter_type="y"
+    ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Function which modifies the elements in the C and D to enforce passivity
         of Y-parameter model at frequency samples in s2 and s3, such that the perturbation
@@ -1857,11 +1863,14 @@ class VectorFitting:
         for k in range(Ns2):
             sk = s2[k]
             Y = D + np.sum(np.squeeze(C[0]) / (sk - self.all_poles))
+            if parameter_type.lower() == "r":
+                Z = np.abs(Y)
+                violation = Z > 1.0
+            else:
+                Z, eigvec = np.linalg.eig(np.real(Y))
+                violation = np.min(np.real(Z)) < 0
 
-            Z, eigvec = np.linalg.eig(np.real(Y))
-            # TODO: Need a modification here, a more general violation condition
-
-            if np.min(np.real(Z)) < 0:  # Any violations
+            if violation:  # Any violations
                 offs = 0
                 for m in range(N):
                     VV = bigV[:, m]
@@ -1901,16 +1910,32 @@ class VectorFitting:
                     BB = Q @ Mmat2
                 # TODO: Here I need to change, change according to RHS of condition and
                 # modify the violation check
-                delz = np.real(Z)
-                if delz < 0:
-                    try:
-                        bigB = np.vstack((bigB, BB))
-                    except:
-                        bigB = BB.copy()
-                    try:
-                        bigC = np.vstack((bigC, -TOL + delz))
-                    except:
-                        bigC = -TOL + delz.copy()
+                if parameter_type.lower() == "r":
+                    delz = np.abs(Z)
+                    violation = delz > 1
+                else:
+                    delz = np.real(Z)
+                    violation = delz < 0
+                    # We need to be a bit different with bigC due to D
+                if violation:
+                    if parameter_type.lower() == "r":
+                        try:
+                            bigB = np.vstack((bigB, -BB))
+                        except:
+                            bigB = -BB.copy()
+                        try:
+                            bigC = np.vstack((bigC, 1 - delz - TOL))
+                        except:
+                            bigC = 1 - TOL - delz.copy()
+                    else:
+                        try:
+                            bigB = np.vstack((bigB, BB))
+                        except:
+                            bigB = BB.copy()
+                        try:
+                            bigC = np.vstack((bigC, -TOL + delz))
+                        except:
+                            bigC = -TOL + delz.copy()
                     viol_G.append(delz)
 
         # Loop for constraint problem (Type 2): all eigenvalues in s3
@@ -1920,7 +1945,10 @@ class VectorFitting:
             sk = s3[k]
             Y = D + np.sum(np.squeeze(C[0]) / (sk - self.all_poles))
             # TODO: Need to change this computation
-            Z, eigvec = np.linalg.eig(np.real(Y))
+            if parameter_type.lower() == "r":
+                Z = np.abs(Y)
+            else:
+                Z, eigvec = np.linalg.eig(np.real(Y))
 
             tell = 0
             offs = 0
@@ -1965,30 +1993,71 @@ class VectorFitting:
                 BB = Q @ Mmat2
 
             # TODO: modify this check and the values
-            delz = np.real(Z)
-            if delz < 0:
-                try:
-                    bigB = np.vstack((bigB, BB))
-                except:
-                    bigB = BB.copy()
-                try:
-                    bigC = np.vstack((bigC, -TOL + delz))
-                except:
-                    bigC = -TOL + delz.copy()
+            if parameter_type.lower() == "r":
+                delz = np.abs(Z)
+                violation = delz > 1
+            else:
+                delz = np.real(Z)
+                violation = delz < 0
+                # We need to be a bit different with bigC due to D
+            if violation:
+                if parameter_type.lower() == "r":
+                    try:
+                        bigB = np.vstack((bigB, -BB))
+                    except:
+                        bigB = -BB.copy()
+                    try:
+                        bigC = np.vstack((bigC, 1 - delz - TOL))
+                    except:
+                        bigC = 1 - TOL - delz.copy()
+                else:
+                    try:
+                        bigB = np.vstack((bigB, BB))
+                    except:
+                        bigB = BB.copy()
+                    try:
+                        bigC = np.vstack((bigC, -TOL + delz))
+                    except:
+                        bigC = -TOL + delz.copy()
                 viol_G.append(delz)
+            # delz = np.real(Z)
+            # if delz < 0:
+            #     try:
+            #         bigB = np.vstack((bigB, BB))
+            #     except:
+            #         bigB = BB.copy()
+            #     try:
+            #         bigC = np.vstack((bigC, -TOL + delz))
+            #     except:
+            #         bigC = -TOL + delz.copy()
+            #     viol_G.append(delz)
         # TODO: Ok here we get the D. Modify values, also modify the delz for Y case. This is wrong
         if Dflag:
-            if eigD < 0:
+            if parameter_type.lower() == "r":
+                violation = np.abs(eigD) > 1
+            else:
+                violation = eigD < 0
+            if violation:
                 dum = np.zeros((N + Dflag))
                 dum[N] = 1
-                try:
-                    bigB = np.vstack((bigB, dum))
-                except:
-                    bigB = dum.copy()
-                try:
-                    bigC = np.vstack((bigC, -TOL + delz))
-                except:
-                    bigC = -TOL + delz.copy()
+                if parameter_type.lower() == "r":
+                    try:
+                        bigB = np.vstack((bigB, -dum))
+                    except:
+                        bigB = dum.copy()
+                    try:
+                        bigC = np.vstack((bigC, 1 - np.abs(eigD) - TOL))
+                    except:
+                        bigC = 1 - np.abs(eigD) - TOL
+                else:
+                    try:
+                        bigB = np.vstack((bigB, dum))
+                    except:
+                        bigB = dum.copy()
+                    try:
+                        bigC = np.vstack((bigC, -TOL + eigD))
+                    except:
+                        bigC = -TOL + eigD.copy()
                 viol_G.append(eigD)
                 viol_D.append(eigD)
 
