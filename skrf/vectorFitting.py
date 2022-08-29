@@ -4,7 +4,7 @@ from numpy import matlib, squeeze
 import pdb
 
 # imports for type hinting
-from typing import Any, Tuple, TYPE_CHECKING
+from typing import Any, Tuple, TYPE_CHECKING, List
 
 from sympy import to_cnf
 
@@ -1005,6 +1005,10 @@ class VectorFitting:
         if parameter_type.lower() == "y":
             violation_bands = self._passivity_test_y()
             return violation_bands
+        if parameter_type.lower() == "r":  # parameter is the reflection coefficient
+            violation_bands = self._passivity_test_r()
+            return violation_bands
+
         if parameter_type.lower() != "s":
             raise NotImplementedError(
                 "Passivity testing is currently only supported for scattering (S) parameters."
@@ -1171,7 +1175,6 @@ class VectorFitting:
                 viol[k] = 0
         # Establishing intervals for passivity violations:
 
-        # I think there might be weird stuff going on here.
         intervals = np.zeros((len(np.nonzero(viol)[0]), 2))
         count = 0
         for k in range(len(mid_w)):
@@ -1201,6 +1204,79 @@ class VectorFitting:
             intervals = np.delete(intervals, killindex, axis=0)
         wintervals = intervals
         return wintervals
+
+    def _passivity_test_r(self) -> np.ndarray:
+        """
+        Look for frequency bands which violate the passivity condition.
+
+        The conditions for R is that abs(R) < 1.0 for all frequencies
+        and that abs(D) < 1
+
+        :return: an array of the violating frequency bands
+        :rtype: np.ndarray
+        """
+        # Ok, few different ways to do this.
+        # We can just sample through the frequency space and get a 01 array
+
+        wintervals = []
+        freq = self.network.frequency
+        freqtest = np.linspace(0.0, max(freq) * 2, 200)
+        A, B, C, D, E = self._get_ABCDE()
+
+        S = np.abs(self._get_s_from_ABCDE(freqs=freqtest, A=A, B=B, C=C, D=D, E=E))
+        non_passive = np.where(S > 1.0)[0]
+        if len(non_passive) == 0:
+            return wintervals
+
+        # Create the correct intervals where R is not passive
+        # So I need to go through 'non_passive' and see when it contains
+        # jumps in indices. That is where we jump from non-passive to passive
+        # and that is where we define the end points of the intervals.
+        interval_indices = self.find_limits_of_violation(violations=non_passive)
+        freq_intervals = np.zeros((interval_indices.shape[0], 2))
+
+        for _i, interval in enumerate(interval_indices):
+            min_freq = 2 * np.pi * freqtest[interval[0]]
+            max_freq = 2 * np.pi * freqtest[interval[1]]
+            if min_freq == max_freq:
+                # Made something temporary to have something to handle this case for now at least.
+                # Same thing as in the passivity_test_y function
+                if max_freq == 2 * np.pi * np.max(freqtest):
+                    max_freq = 1e16
+
+                elif max_freq == 2 * np.pi * np.min(freqtest):
+                    max_freq = freqtest = [1] / 2
+                else:
+                    min_freq *= 7 / 8
+                    max_freq *= 9 / 8
+            else:
+                if max_freq == 2 * np.pi * np.max(freqtest):
+                    max_freq = 1e16
+            freq_intervals[_i, :] = np.array([min_freq, max_freq])
+
+        return freq_intervals
+
+    def _find_limits_of_violation(self, violations: np.ndarray) -> List[Tuple]:
+        """
+        Input an array of indices where violations take place. This one finds the
+        min max index of each violation interval and returns an array of min max tuples
+
+        :param violations: Array of indices of violations
+        :type violations: np.ndarray
+        :return: Array of min max indices of each violation interval
+        :rtype: List[Tuple]
+        """
+
+        intervals = []
+        i = 0
+        while i < len(violations):
+            min_index = violations[i]
+            while i < len(violations) - 1 and violations[i] + 1 == violations[i + 1]:
+                i += 1
+            max_index = violations[i]
+            intervals.append((min_index, max_index))
+
+        return intervals
 
     def is_passive(self, parameter_type: str = "s") -> bool:
         """
@@ -1498,7 +1574,7 @@ class VectorFitting:
                 stacklevel=2,
             )
 
-    def passivity_enforce_y(self):
+    def passivity_enforce_y(self, parameter_type="y"):
         """
         Use the Fast residue perturbation technique to perturbe the eigenvalues
         of D and the residues to find a passive model while minimizing the difference
@@ -1555,8 +1631,12 @@ class VectorFitting:
                     # and bring it up above zero.
                     s_viol, g_pass, ss = self.violextrema(violation_bands)
                     s2 = np.sort(s_viol)
-                    if len(s2) == 0 and np.all(np.linalg.eigvals(D1) > 0):
-                        break
+                    if parameter_type == "r":
+                        if len(s2) == 0 and np.abs(D1) < 1.0:
+                            break
+                    else:
+                        if len(s2) == 0 and np.all(np.linalg.eigvals(D1) > 0):
+                            break
                 C1, D1 = self.FRPY(A0, B0, C0, D0, s, s2, s3)
                 k = 0
                 z = 0
@@ -1657,7 +1737,7 @@ class VectorFitting:
                 biginvV[0, m] = np.linalg.inv(V)
 
             bigD[:, m] = D_val
-        # breakpoint()
+
         for k in range(Ns):
             sk = s[k]
             tell = 0
@@ -1779,6 +1859,7 @@ class VectorFitting:
             Y = D + np.sum(np.squeeze(C[0]) / (sk - self.all_poles))
 
             Z, eigvec = np.linalg.eig(np.real(Y))
+            # TODO: Need a modification here, a more general violation condition
 
             if np.min(np.real(Z)) < 0:  # Any violations
                 offs = 0
@@ -1818,6 +1899,8 @@ class VectorFitting:
                     BB = Q * Mmat2
                 else:
                     BB = Q @ Mmat2
+                # TODO: Here I need to change, change according to RHS of condition and
+                # modify the violation check
                 delz = np.real(Z)
                 if delz < 0:
                     try:
@@ -1831,11 +1914,12 @@ class VectorFitting:
                     viol_G.append(delz)
 
         # Loop for constraint problem (Type 2): all eigenvalues in s3
+
         Ns3 = len(s3)
         for k in range(Ns3):
             sk = s3[k]
             Y = D + np.sum(np.squeeze(C[0]) / (sk - self.all_poles))
-
+            # TODO: Need to change this computation
             Z, eigvec = np.linalg.eig(np.real(Y))
 
             tell = 0
@@ -1880,6 +1964,7 @@ class VectorFitting:
             else:
                 BB = Q @ Mmat2
 
+            # TODO: modify this check and the values
             delz = np.real(Z)
             if delz < 0:
                 try:
@@ -1891,6 +1976,7 @@ class VectorFitting:
                 except:
                     bigC = -TOL + delz.copy()
                 viol_G.append(delz)
+        # TODO: Ok here we get the D. Modify values, also modify the delz for Y case. This is wrong
         if Dflag:
             if eigD < 0:
                 dum = np.zeros((N + Dflag))
@@ -1913,6 +1999,7 @@ class VectorFitting:
         if len(bigC.shape) > 1:
             bigC = np.squeeze(bigC)
 
+        # TODO: I probably need to change this to be np.abs(bigB)
         bigB = np.real(bigB)
         for col in range(len(H)):
             if len(bigB) > 0:
@@ -1971,7 +2058,7 @@ class VectorFitting:
         Y = D + np.sum(C / (sk - self.all_poles))
         return Y
 
-    def violextrema(self, violation_bands):
+    def violextrema(self, violation_bands, parameter_type="y"):
         """
         Find the lowest eigenvalue within each violation band.
         """
@@ -2005,7 +2092,10 @@ class VectorFitting:
 
             for k in range(len(s_pass)):
                 Y = (C * (1.0 / (s_pass[k] - self.all_poles))) @ B + D
-                G = np.real(Y)
+                if parameter_type.lower() == "r":
+                    G = np.abs(Y)
+                else:
+                    G = np.real(Y)
                 EV, T0 = np.linalg.eig(G)
                 if k == 0:
                     old_T0 = np.zeros_like(T0)
@@ -2014,10 +2104,16 @@ class VectorFitting:
 
             # Identifying violations, picking minima for s2
             s_pass_ind = np.zeros(shape=(len(s_pass)))
-            if np.min(EE[0]) < 0.0:
-                s_pass_ind_2 = np.where(EE[0] == np.min(EE[0]))[0]
+            if parameter_type.lower() == "r":
+                if np.max(EE[0]) > 1.0:
+                    s_pass_ind_2 = np.where(EE[0] == np.max([EE[0]]))[0]
+                else:
+                    s_pass_ind_2 = np.zeros(shape=(len(s_pass)))
             else:
-                s_pass_ind_2 = np.zeros(shape=(len(s_pass)))
+                if np.min(EE[0]) < 0.0:
+                    s_pass_ind_2 = np.where(EE[0] == np.min(EE[0]))[0]
+                else:
+                    s_pass_ind_2 = np.zeros(shape=(len(s_pass)))
             if len(s_pass_ind_2) > 1:
                 s_pass_ind_2 = s_pass_ind_2[0]
 
@@ -2033,16 +2129,29 @@ class VectorFitting:
 
             # for s_p in s_pass[np.where(s_pass_ind == 1)[0]]:
             #     s.append(s_p)
+
+            # Now this needs to be adapted to parameter_type = r:
             s.append(s_pass[s_pass_ind_2])
-            dum = np.min(EE[0], axis=0)
-            g_pass_2, ind = np.min(dum), np.where(dum == np.min(dum))[0][0]
-            smin2 = s_pass[ind]  # Largest violation in interval
-            g_pass_list = [g_pass, g_pass_2]
-            g_pass = min(g_pass, g_pass_2)
-            ind = g_pass_list.index(g_pass)
-            dums = [smin, smin2]
-            smin = dums[ind]
-            g_pass = min(g_pass, np.min(np.min(EE)))
+            if parameter_type == "r":
+                dum = np.max(EE[0], axis=0)
+                g_pass_2, ind = np.max(dum), np.where(dum == np.max(dum))[0][0]
+                smin2 = s_pass[ind]  # Largest violation in interval
+                g_pass_list = [g_pass, g_pass_2]
+                g_pass = max(g_pass, g_pass_2)
+                ind = g_pass_list.index(g_pass)
+                dums = [smin, smin2]
+                smin = dums[ind]
+                g_pass = min(g_pass, np.max(np.max(EE)))
+            else:
+                dum = np.min(EE[0], axis=0)
+                g_pass_2, ind = np.min(dum), np.where(dum == np.min(dum))[0][0]
+                smin2 = s_pass[ind]  # Largest violation in interval
+                g_pass_list = [g_pass, g_pass_2]
+                g_pass = min(g_pass, g_pass_2)
+                ind = g_pass_list.index(g_pass)
+                dums = [smin, smin2]
+                smin = dums[ind]
+                g_pass = min(g_pass, np.min(np.min(EE)))
         s_pass = np.array(s, dtype=complex)
 
         return s_pass, g_pass, smin
