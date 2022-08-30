@@ -4,7 +4,7 @@ from numpy import matlib, squeeze
 import pdb
 
 # imports for type hinting
-from typing import Any, Tuple, TYPE_CHECKING
+from typing import Any, Tuple, TYPE_CHECKING, List
 
 from sympy import to_cnf
 
@@ -1005,6 +1005,10 @@ class VectorFitting:
         if parameter_type.lower() == "y":
             violation_bands = self._passivity_test_y()
             return violation_bands
+        if parameter_type.lower() == "r":  # parameter is the reflection coefficient
+            violation_bands = self._passivity_test_r()
+            return violation_bands
+
         if parameter_type.lower() != "s":
             raise NotImplementedError(
                 "Passivity testing is currently only supported for scattering (S) parameters."
@@ -1171,7 +1175,6 @@ class VectorFitting:
                 viol[k] = 0
         # Establishing intervals for passivity violations:
 
-        # I think there might be weird stuff going on here.
         intervals = np.zeros((len(np.nonzero(viol)[0]), 2))
         count = 0
         for k in range(len(mid_w)):
@@ -1201,6 +1204,79 @@ class VectorFitting:
             intervals = np.delete(intervals, killindex, axis=0)
         wintervals = intervals
         return wintervals
+
+    def _passivity_test_r(self) -> np.ndarray:
+        """
+        Look for frequency bands which violate the passivity condition.
+
+        The conditions for R is that abs(R) < 1.0 for all frequencies
+        and that abs(D) < 1
+
+        :return: an array of the violating frequency bands
+        :rtype: np.ndarray
+        """
+        # Ok, few different ways to do this.
+        # We can just sample through the frequency space and get a 01 array
+
+        wintervals = []
+        freq = self.network.f
+        freqtest = np.linspace(0.0, np.max(freq) * 2, 200)
+        A, B, C, D, E = self._get_ABCDE()
+
+        S = np.abs(self._get_s_from_ABCDE(freqs=freqtest, A=A, B=B, C=C, D=D, E=E))
+        non_passive = np.where(S > 1.0)[0]
+        if len(non_passive) == 0:
+            return np.array(wintervals)
+
+        # Create the correct intervals where R is not passive
+        # So I need to go through 'non_passive' and see when it contains
+        # jumps in indices. That is where we jump from non-passive to passive
+        # and that is where we define the end points of the intervals.
+        interval_indices = self.find_limits_of_violation(violations=non_passive)
+        freq_intervals = np.zeros((interval_indices.shape[0], 2))
+
+        for _i, interval in enumerate(interval_indices):
+            min_freq = 2 * np.pi * freqtest[interval[0]]
+            max_freq = 2 * np.pi * freqtest[interval[1]]
+            if min_freq == max_freq:
+                # Made something temporary to have something to handle this case for now at least.
+                # Same thing as in the passivity_test_y function
+                if max_freq == 2 * np.pi * np.max(freqtest):
+                    max_freq = 1e16
+
+                elif max_freq == 2 * np.pi * np.min(freqtest):
+                    max_freq = freqtest = [1] / 2
+                else:
+                    min_freq *= 7 / 8
+                    max_freq *= 9 / 8
+            else:
+                if max_freq == 2 * np.pi * np.max(freqtest):
+                    max_freq = 1e16
+            freq_intervals[_i, :] = np.array([min_freq, max_freq])
+
+        return freq_intervals
+
+    def _find_limits_of_violation(self, violations: np.ndarray) -> List[Tuple]:
+        """
+        Input an array of indices where violations take place. This one finds the
+        min max index of each violation interval and returns an array of min max tuples
+
+        :param violations: Array of indices of violations
+        :type violations: np.ndarray
+        :return: Array of min max indices of each violation interval
+        :rtype: List[Tuple]
+        """
+
+        intervals = []
+        i = 0
+        while i < len(violations):
+            min_index = violations[i]
+            while i < len(violations) - 1 and violations[i] + 1 == violations[i + 1]:
+                i += 1
+            max_index = violations[i]
+            intervals.append((min_index, max_index))
+
+        return intervals
 
     def is_passive(self, parameter_type: str = "s") -> bool:
         """
@@ -1234,10 +1310,28 @@ class VectorFitting:
         """
 
         viol_bands = self.passivity_test(parameter_type)
-        if len(viol_bands) == 0:
-            return True
-        else:
+        if len(viol_bands) != 0:
             return False
+        else:
+            if parameter_type in ["r", "y"]:
+                _, _, _, D, _ = self._get_ABCDE()
+                if parameter_type == "r":
+                    if np.all(np.abs(D) < 1.0):
+                        return True
+                    else:
+                        return False
+                else:
+                    if np.all(D > 0.0):
+                        return True
+                    else:
+                        return False
+            else:
+                return True
+
+        # if len(viol_bands) == 0:
+        #     return True
+        # else:
+        #     return False
 
     def passivity_enforce(
         self, n_samples: int = 200, f_max: float = None, parameter_type: str = "s"
@@ -1297,8 +1391,8 @@ class VectorFitting:
             Based Macromodels," in IEEE Transactions on Microwave Theory and Techniques, vol. 57, no. 2, pp. 415-420,
             Feb. 2009, DOI: 10.1109/TMTT.2008.2011201.
         """
-        if parameter_type.lower() == "y":
-            self.passivity_enforce_y()
+        if parameter_type.lower() in ["y", "r"]:
+            self.passivity_enforce_y_or_r(parameter_type=parameter_type.lower())
             return
         if parameter_type.lower() != "s":
             raise NotImplementedError(
@@ -1498,14 +1592,14 @@ class VectorFitting:
                 stacklevel=2,
             )
 
-    def passivity_enforce_y(self):
+    def passivity_enforce_y_or_r(self, parameter_type="y"):
         """
         Use the Fast residue perturbation technique to perturbe the eigenvalues
         of D and the residues to find a passive model while minimizing the difference
         between the initial pole-residue model and the final passive one.
         """
         # always run passivity test first; this will write 'self.violation_bands'
-        if self.is_passive(parameter_type="y"):
+        if self.is_passive(parameter_type=parameter_type):
             # model is already passive; do nothing and return
             logging.info(
                 "Passivity enforcement: The model is already passive. Nothing to do."
@@ -1545,19 +1639,32 @@ class VectorFitting:
             for iter_in in range(niter_in):
                 s2 = []
                 if iter_in == 0:
-                    violation_bands = self.passivity_test(parameter_type="y")
-                    if len(violation_bands) == 0 and np.all(np.linalg.eigvals(D1) >= 0):
-                        break_outer = True
-                        break
+                    violation_bands = self.passivity_test(parameter_type=parameter_type)
+                    if parameter_type == "r":
+                        if len(violation_bands) == 0 and np.all(np.abs(D1) <= 1):
+                            break_outer = True
+                            break
+                    else:
+                        if len(violation_bands) == 0 and np.all(
+                            np.linalg.eigvals(D1) >= 0
+                        ):
+                            break_outer = True
+                            break
 
                     # Now we need to find the minima within each interval
                     # So we need to find the lowest eigenvalue within each violating interval
                     # and bring it up above zero.
                     s_viol, g_pass, ss = self.violextrema(violation_bands)
                     s2 = np.sort(s_viol)
-                    if len(s2) == 0 and np.all(np.linalg.eigvals(D1) > 0):
-                        break
-                C1, D1 = self.FRPY(A0, B0, C0, D0, s, s2, s3)
+                    if parameter_type == "r":
+                        if len(s2) == 0 and np.abs(D1) < 1.0:
+                            break
+                    else:
+                        if len(s2) == 0 and np.all(np.linalg.eigvals(D1) > 0):
+                            break
+                C1, D1 = self.FRPY(
+                    A0, B0, C0, D0, s, s2, s3, parameter_type=parameter_type
+                )
                 k = 0
                 z = 0
                 flag = False
@@ -1576,8 +1683,10 @@ class VectorFitting:
                 # self.residues = C1.copy().astype(complex)
                 self.constant_coeff = D1.copy()
                 if iter_in != niter_in - 1:
-                    wintervals = self.passivity_test(parameter_type="y")
-                    s_viol, g_pass, ss = self.violextrema(wintervals)
+                    wintervals = self.passivity_test(parameter_type=parameter_type)
+                    s_viol, g_pass, ss = self.violextrema(
+                        wintervals, parameter_type=parameter_type
+                    )
                     olds3 = s3
                     if len(s3) == 0:
                         if len(s_viol) == 0 or s_viol in s2:
@@ -1593,7 +1702,9 @@ class VectorFitting:
 
             iter_out += 1
 
-    def FRPY(self, A, B, C, D, s, s2, s3) -> Tuple[np.ndarray, np.ndarray]:
+    def FRPY(
+        self, A, B, C, D, s, s2, s3, parameter_type="y"
+    ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Function which modifies the elements in the C and D to enforce passivity
         of Y-parameter model at frequency samples in s2 and s3, such that the perturbation
@@ -1607,7 +1718,11 @@ class VectorFitting:
         N = len(self.all_poles)
 
         d = np.linalg.eigvals(D)
-        if d < 0:
+        if parameter_type.lower() == "r":
+            violation = np.abs(d) > 1.0
+        else:
+            violation = d < 0
+        if violation:
             Dflag = True
             eigD, VD = np.linalg.eig(D)
             invVD = np.linalg.inv(VD)
@@ -1657,7 +1772,7 @@ class VectorFitting:
                 biginvV[0, m] = np.linalg.inv(V)
 
             bigD[:, m] = D_val
-        # breakpoint()
+
         for k in range(Ns):
             sk = s[k]
             tell = 0
@@ -1777,10 +1892,14 @@ class VectorFitting:
         for k in range(Ns2):
             sk = s2[k]
             Y = D + np.sum(np.squeeze(C[0]) / (sk - self.all_poles))
+            if parameter_type.lower() == "r":
+                Z = np.abs(Y)
+                violation = Z > 1.0
+            else:
+                Z, eigvec = np.linalg.eig(np.real(Y))
+                violation = np.min(np.real(Z)) < 0
 
-            Z, eigvec = np.linalg.eig(np.real(Y))
-
-            if np.min(np.real(Z)) < 0:  # Any violations
+            if violation:  # Any violations
                 offs = 0
                 for m in range(N):
                     VV = bigV[:, m]
@@ -1818,25 +1937,46 @@ class VectorFitting:
                     BB = Q * Mmat2
                 else:
                     BB = Q @ Mmat2
-                delz = np.real(Z)
-                if delz < 0:
-                    try:
-                        bigB = np.vstack((bigB, BB))
-                    except:
-                        bigB = BB.copy()
-                    try:
-                        bigC = np.vstack((bigC, -TOL + delz))
-                    except:
-                        bigC = -TOL + delz.copy()
+                # TODO: Here I need to change, change according to RHS of condition and
+                # modify the violation check
+                if parameter_type.lower() == "r":
+                    delz = np.abs(Z)
+                    violation = delz > 1
+                else:
+                    delz = np.real(Z)
+                    violation = delz < 0
+                    # We need to be a bit different with bigC due to D
+                if violation:
+                    if parameter_type.lower() == "r":
+                        try:
+                            bigB = np.vstack((bigB, -BB))
+                        except:
+                            bigB = -BB.copy()
+                        try:
+                            bigC = np.vstack((bigC, 1 - delz - TOL))
+                        except:
+                            bigC = 1 - TOL - delz.copy()
+                    else:
+                        try:
+                            bigB = np.vstack((bigB, BB))
+                        except:
+                            bigB = BB.copy()
+                        try:
+                            bigC = np.vstack((bigC, -TOL + delz))
+                        except:
+                            bigC = -TOL + delz.copy()
                     viol_G.append(delz)
 
         # Loop for constraint problem (Type 2): all eigenvalues in s3
+
         Ns3 = len(s3)
         for k in range(Ns3):
             sk = s3[k]
             Y = D + np.sum(np.squeeze(C[0]) / (sk - self.all_poles))
-
-            Z, eigvec = np.linalg.eig(np.real(Y))
+            if parameter_type.lower() == "r":
+                Z = np.abs(Y)
+            else:
+                Z, eigvec = np.linalg.eig(np.real(Y))
 
             tell = 0
             offs = 0
@@ -1880,29 +2020,70 @@ class VectorFitting:
             else:
                 BB = Q @ Mmat2
 
-            delz = np.real(Z)
-            if delz < 0:
-                try:
-                    bigB = np.vstack((bigB, BB))
-                except:
-                    bigB = BB.copy()
-                try:
-                    bigC = np.vstack((bigC, -TOL + delz))
-                except:
-                    bigC = -TOL + delz.copy()
+            if parameter_type.lower() == "r":
+                delz = np.abs(Z)
+                violation = delz > 1
+            else:
+                delz = np.real(Z)
+                violation = delz < 0
+                # We need to be a bit different with bigC due to D
+            if violation:
+                if parameter_type.lower() == "r":
+                    try:
+                        bigB = np.vstack((bigB, -BB))
+                    except:
+                        bigB = -BB.copy()
+                    try:
+                        bigC = np.vstack((bigC, 1 - delz - TOL))
+                    except:
+                        bigC = 1 - TOL - delz.copy()
+                else:
+                    try:
+                        bigB = np.vstack((bigB, BB))
+                    except:
+                        bigB = BB.copy()
+                    try:
+                        bigC = np.vstack((bigC, -TOL + delz))
+                    except:
+                        bigC = -TOL + delz.copy()
                 viol_G.append(delz)
+            # delz = np.real(Z)
+            # if delz < 0:
+            #     try:
+            #         bigB = np.vstack((bigB, BB))
+            #     except:
+            #         bigB = BB.copy()
+            #     try:
+            #         bigC = np.vstack((bigC, -TOL + delz))
+            #     except:
+            #         bigC = -TOL + delz.copy()
+            #     viol_G.append(delz)
         if Dflag:
-            if eigD < 0:
+            if parameter_type.lower() == "r":
+                violation = np.abs(eigD) > 1
+            else:
+                violation = eigD < 0
+            if violation:
                 dum = np.zeros((N + Dflag))
                 dum[N] = 1
-                try:
-                    bigB = np.vstack((bigB, dum))
-                except:
-                    bigB = dum.copy()
-                try:
-                    bigC = np.vstack((bigC, -TOL + delz))
-                except:
-                    bigC = -TOL + delz.copy()
+                if parameter_type.lower() == "r":
+                    try:
+                        bigB = np.vstack((bigB, -dum))
+                    except:
+                        bigB = dum.copy()
+                    try:
+                        bigC = np.vstack((bigC, 1 - np.abs(eigD) - TOL))
+                    except:
+                        bigC = 1 - np.abs(eigD) - TOL
+                else:
+                    try:
+                        bigB = np.vstack((bigB, dum))
+                    except:
+                        bigB = dum.copy()
+                    try:
+                        bigC = np.vstack((bigC, -TOL + eigD))
+                    except:
+                        bigC = -TOL + eigD.copy()
                 viol_G.append(eigD)
                 viol_D.append(eigD)
 
@@ -1913,11 +2094,13 @@ class VectorFitting:
         if len(bigC.shape) > 1:
             bigC = np.squeeze(bigC)
 
-        bigB = np.real(bigB)
+        if parameter_type == "r":
+            bigB = -np.abs(bigB)
+        else:
+            bigB = np.real(bigB)
         for col in range(len(H)):
             if len(bigB) > 0:
                 bigB[col] = bigB[col] / Escale[col]
-
         dx, f, xu, iterations, lagrangian, iact = quadprog.solve_qp(H, ff, bigB, -bigC)
         dx = dx / Escale
         Cnew = C.copy()
@@ -1927,11 +2110,11 @@ class VectorFitting:
         for m in range(N):
             if cindex[m] == 0:
                 if isinstance(dx[m], float):
-                    D1 = dx[m]
-                    Cnew[:, m] = Cnew[:, m] + bigV[m] * D1 * biginvV[m]
+                    Diff1 = dx[m]
+                    Cnew[:, m] = Cnew[:, m] + bigV[m] * Diff1 * biginvV[m]
                 else:
-                    D1 = np.diag(np.array(dx[m]))
-                    Cnew[:, m] = Cnew[:, m] + bigV[:, m] @ D1 @ biginvV[:, m]
+                    Diff1 = np.diag(np.array(dx[m]))
+                    Cnew[:, m] = Cnew[:, m] + bigV[:, m] @ Diff1 @ biginvV[:, m]
             elif cindex[m] == 1:
                 GAMM1 = bigV[m]
                 GAMM2 = bigV[m + 1]
@@ -1941,21 +2124,21 @@ class VectorFitting:
                 R1 = np.real(C[:, m])
                 R2 = np.imag(C[:, m])
                 if isinstance(dx[m], float):
-                    D1 = dx[m]
-                    D2 = dx[m + 1]
-                    R1new = R1 + GAMM1 * D1 * invGAMM1
-                    R2new = R2 + GAMM2 * D2 * invGAMM2
+                    Diff1 = dx[m]
+                    Diff2 = dx[m + 1]
+                    R1new = R1 + GAMM1 * Diff1 * invGAMM1
+                    R2new = R2 + GAMM2 * Diff2 * invGAMM2
                 else:
-                    D1 = np.diag(np.array(dx[m]))
-                    D2 = np.diag(np.array(dx[m + 1]))
-                    R1new = R1 + GAMM1 @ D1 @ invGAMM1
-                    R2new = R2 + GAMM2 @ D2 @ invGAMM2
+                    Diff1 = np.diag(np.array(dx[m]))
+                    Diff2 = np.diag(np.array(dx[m + 1]))
+                    R1new = R1 + GAMM1 @ Diff1 @ invGAMM1
+                    R2new = R2 + GAMM2 @ Diff2 @ invGAMM2
                 Cnew[:, m] = R1new + 1j * R2new
                 Cnew[:, m + 1] = R1new - 1j * R2new
         if Dflag:
-            if isinstance(dx[m], float):
-                DD = dx[m]
-                Dnew = Dnew + VD * D1 * invVD
+            if isinstance(dx[N], float):
+                DD = dx[N]
+                Dnew = Dnew + VD * DD * invVD
             else:
                 DD = np.diag(dx[N])
                 Dnew = Dnew + VD @ DD @ invVD
@@ -1971,7 +2154,7 @@ class VectorFitting:
         Y = D + np.sum(C / (sk - self.all_poles))
         return Y
 
-    def violextrema(self, violation_bands):
+    def violextrema(self, violation_bands, parameter_type="y"):
         """
         Find the lowest eigenvalue within each violation band.
         """
@@ -2005,7 +2188,10 @@ class VectorFitting:
 
             for k in range(len(s_pass)):
                 Y = (C * (1.0 / (s_pass[k] - self.all_poles))) @ B + D
-                G = np.real(Y)
+                if parameter_type.lower() == "r":
+                    G = np.abs(Y)
+                else:
+                    G = np.real(Y)
                 EV, T0 = np.linalg.eig(G)
                 if k == 0:
                     old_T0 = np.zeros_like(T0)
@@ -2014,10 +2200,16 @@ class VectorFitting:
 
             # Identifying violations, picking minima for s2
             s_pass_ind = np.zeros(shape=(len(s_pass)))
-            if np.min(EE[0]) < 0.0:
-                s_pass_ind_2 = np.where(EE[0] == np.min(EE[0]))[0]
+            if parameter_type.lower() == "r":
+                if np.max(EE[0]) > 1.0:
+                    s_pass_ind_2 = np.where(EE[0] == np.max([EE[0]]))[0]
+                else:
+                    s_pass_ind_2 = np.zeros(shape=(len(s_pass)))
             else:
-                s_pass_ind_2 = np.zeros(shape=(len(s_pass)))
+                if np.min(EE[0]) < 0.0:
+                    s_pass_ind_2 = np.where(EE[0] == np.min(EE[0]))[0]
+                else:
+                    s_pass_ind_2 = np.zeros(shape=(len(s_pass)))
             if len(s_pass_ind_2) > 1:
                 s_pass_ind_2 = s_pass_ind_2[0]
 
@@ -2033,16 +2225,28 @@ class VectorFitting:
 
             # for s_p in s_pass[np.where(s_pass_ind == 1)[0]]:
             #     s.append(s_p)
+
             s.append(s_pass[s_pass_ind_2])
-            dum = np.min(EE[0], axis=0)
-            g_pass_2, ind = np.min(dum), np.where(dum == np.min(dum))[0][0]
-            smin2 = s_pass[ind]  # Largest violation in interval
-            g_pass_list = [g_pass, g_pass_2]
-            g_pass = min(g_pass, g_pass_2)
-            ind = g_pass_list.index(g_pass)
-            dums = [smin, smin2]
-            smin = dums[ind]
-            g_pass = min(g_pass, np.min(np.min(EE)))
+            if parameter_type == "r":
+                dum = np.max(EE[0], axis=0)
+                g_pass_2, ind = np.max(dum), np.where(dum == np.max(dum))[0][0]
+                smin2 = s_pass[ind]  # Largest violation in interval
+                g_pass_list = [g_pass, g_pass_2]
+                g_pass = max(g_pass, g_pass_2)
+                ind = g_pass_list.index(g_pass)
+                dums = [smin, smin2]
+                smin = dums[ind]
+                g_pass = min(g_pass, np.max(np.max(EE)))
+            else:
+                dum = np.min(EE[0], axis=0)
+                g_pass_2, ind = np.min(dum), np.where(dum == np.min(dum))[0][0]
+                smin2 = s_pass[ind]  # Largest violation in interval
+                g_pass_list = [g_pass, g_pass_2]
+                g_pass = min(g_pass, g_pass_2)
+                ind = g_pass_list.index(g_pass)
+                dums = [smin, smin2]
+                smin = dums[ind]
+                g_pass = min(g_pass, np.min(np.min(EE)))
         s_pass = np.array(s, dtype=complex)
 
         return s_pass, g_pass, smin
