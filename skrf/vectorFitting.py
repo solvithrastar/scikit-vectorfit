@@ -1973,7 +1973,6 @@ class VectorFitting:
         for k in range(Ns3):
             sk = s3[k]
             Y = D + np.sum(np.squeeze(C[0]) / (sk - self.all_poles))
-            # TODO: Need to change this computation
             if parameter_type.lower() == "r":
                 Z = np.abs(Y)
             else:
@@ -2021,7 +2020,6 @@ class VectorFitting:
             else:
                 BB = Q @ Mmat2
 
-            # TODO: modify this check and the values
             if parameter_type.lower() == "r":
                 delz = np.abs(Z)
                 violation = delz > 1
@@ -2060,7 +2058,6 @@ class VectorFitting:
             #     except:
             #         bigC = -TOL + delz.copy()
             #     viol_G.append(delz)
-        # TODO: Ok here we get the D. Modify values, also modify the delz for Y case. This is wrong
         if Dflag:
             if parameter_type.lower() == "r":
                 violation = np.abs(eigD) > 1
@@ -2229,7 +2226,6 @@ class VectorFitting:
             # for s_p in s_pass[np.where(s_pass_ind == 1)[0]]:
             #     s.append(s_p)
 
-            # Now this needs to be adapted to parameter_type = r:
             s.append(s_pass[s_pass_ind_2])
             if parameter_type == "r":
                 dum = np.max(EE[0], axis=0)
