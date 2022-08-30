@@ -1225,10 +1225,8 @@ class VectorFitting:
 
         S = np.abs(self._get_s_from_ABCDE(freqs=freqtest, A=A, B=B, C=C, D=D, E=E))
         non_passive = np.where(S > 1.0)[0]
-        if len(non_passive) == 0 and np.all(D < 1):
-            return wintervals
-        elif len(non_passive) == 0 and np.any(D > 1):
-            return np.array([2 * np.pi * np.max(freq), 1e16])
+        if len(non_passive) == 0:
+            return np.array(wintervals)
 
         # Create the correct intervals where R is not passive
         # So I need to go through 'non_passive' and see when it contains
@@ -1312,10 +1310,28 @@ class VectorFitting:
         """
 
         viol_bands = self.passivity_test(parameter_type)
-        if len(viol_bands) == 0:
-            return True
-        else:
+        if len(viol_bands) != 0:
             return False
+        else:
+            if parameter_type in ["r", "y"]:
+                _, _, _, D, _ = self._get_ABCDE()
+                if parameter_type == "r":
+                    if np.all(np.abs(D) < 1.0):
+                        return True
+                    else:
+                        return False
+                else:
+                    if np.all(D > 0.0):
+                        return True
+                    else:
+                        return False
+            else:
+                return True
+
+        # if len(viol_bands) == 0:
+        #     return True
+        # else:
+        #     return False
 
     def passivity_enforce(
         self, n_samples: int = 200, f_max: float = None, parameter_type: str = "s"
@@ -1624,9 +1640,16 @@ class VectorFitting:
                 s2 = []
                 if iter_in == 0:
                     violation_bands = self.passivity_test(parameter_type=parameter_type)
-                    if len(violation_bands) == 0 and np.all(np.linalg.eigvals(D1) >= 0):
-                        break_outer = True
-                        break
+                    if parameter_type == "r":
+                        if len(violation_bands) == 0 and np.all(np.abs(D1) <= 1):
+                            break_outer = True
+                            break
+                    else:
+                        if len(violation_bands) == 0 and np.all(
+                            np.linalg.eigvals(D1) >= 0
+                        ):
+                            break_outer = True
+                            break
 
                     # Now we need to find the minima within each interval
                     # So we need to find the lowest eigenvalue within each violating interval
@@ -2074,12 +2097,13 @@ class VectorFitting:
         if len(bigC.shape) > 1:
             bigC = np.squeeze(bigC)
 
-        # TODO: I probably need to change this to be np.abs(bigB)
-        bigB = np.real(bigB)
+        if parameter_type == "r":
+            bigB = -np.abs(bigB)
+        else:
+            bigB = np.real(bigB)
         for col in range(len(H)):
             if len(bigB) > 0:
                 bigB[col] = bigB[col] / Escale[col]
-
         dx, f, xu, iterations, lagrangian, iact = quadprog.solve_qp(H, ff, bigB, -bigC)
         dx = dx / Escale
         Cnew = C.copy()
@@ -2089,11 +2113,11 @@ class VectorFitting:
         for m in range(N):
             if cindex[m] == 0:
                 if isinstance(dx[m], float):
-                    D1 = dx[m]
-                    Cnew[:, m] = Cnew[:, m] + bigV[m] * D1 * biginvV[m]
+                    Diff1 = dx[m]
+                    Cnew[:, m] = Cnew[:, m] + bigV[m] * Diff1 * biginvV[m]
                 else:
-                    D1 = np.diag(np.array(dx[m]))
-                    Cnew[:, m] = Cnew[:, m] + bigV[:, m] @ D1 @ biginvV[:, m]
+                    Diff1 = np.diag(np.array(dx[m]))
+                    Cnew[:, m] = Cnew[:, m] + bigV[:, m] @ Diff1 @ biginvV[:, m]
             elif cindex[m] == 1:
                 GAMM1 = bigV[m]
                 GAMM2 = bigV[m + 1]
@@ -2103,21 +2127,21 @@ class VectorFitting:
                 R1 = np.real(C[:, m])
                 R2 = np.imag(C[:, m])
                 if isinstance(dx[m], float):
-                    D1 = dx[m]
-                    D2 = dx[m + 1]
-                    R1new = R1 + GAMM1 * D1 * invGAMM1
-                    R2new = R2 + GAMM2 * D2 * invGAMM2
+                    Diff1 = dx[m]
+                    Diff2 = dx[m + 1]
+                    R1new = R1 + GAMM1 * Diff1 * invGAMM1
+                    R2new = R2 + GAMM2 * Diff2 * invGAMM2
                 else:
-                    D1 = np.diag(np.array(dx[m]))
-                    D2 = np.diag(np.array(dx[m + 1]))
-                    R1new = R1 + GAMM1 @ D1 @ invGAMM1
-                    R2new = R2 + GAMM2 @ D2 @ invGAMM2
+                    Diff1 = np.diag(np.array(dx[m]))
+                    Diff2 = np.diag(np.array(dx[m + 1]))
+                    R1new = R1 + GAMM1 @ Diff1 @ invGAMM1
+                    R2new = R2 + GAMM2 @ Diff2 @ invGAMM2
                 Cnew[:, m] = R1new + 1j * R2new
                 Cnew[:, m + 1] = R1new - 1j * R2new
         if Dflag:
-            if isinstance(dx[m], float):
-                DD = dx[m]
-                Dnew = Dnew + VD * D1 * invVD
+            if isinstance(dx[N], float):
+                DD = dx[N]
+                Dnew = Dnew + VD * DD * invVD
             else:
                 DD = np.diag(dx[N])
                 Dnew = Dnew + VD @ DD @ invVD
