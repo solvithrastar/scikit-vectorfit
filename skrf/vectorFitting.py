@@ -1730,7 +1730,7 @@ class VectorFitting:
         else:
             Dflag = False
 
-        TOL = 1e-4
+        TOL = 1e-6
         Ns = len(s)
         Ns2 = len(s2)
         Nc = len(D)  # This is 1 in all my use cases
@@ -1967,7 +1967,6 @@ class VectorFitting:
                     viol_G.append(delz)
 
         # Loop for constraint problem (Type 2): all eigenvalues in s3
-
         Ns3 = len(s3)
         for k in range(Ns3):
             sk = s3[k]
@@ -2109,19 +2108,12 @@ class VectorFitting:
         #     # bigB = np.sqrt(1 - np.square(np.real(bigB)) + np.square(np.imag(bigB)))
         # else:
         #     bigB = np.real(bigB)
-        print(f"{bigB=}")
-        # breakpoint()
         for col in range(len(H)):
             if len(bigB) > 0:
                 bigB[col] = bigB[col] / Escale[col]
-        print(f"{H=}")
-        print(f"{bigB=}")
-        print(f"{bigC=}")
-        # 1 / 0
+
         dx, f, xu, iterations, lagrangian, iact = quadprog.solve_qp(H, ff, bigB, -bigC)
         dx = dx / Escale
-        # breakpoint()
-        print(f"{dx=}")
         Cnew = C.copy()
         Dnew = D.copy()
         bigV = bigV[0]
@@ -2203,7 +2195,6 @@ class VectorFitting:
             s_pass = np.sort_complex(np.concatenate((s_pass1, s_pass2), axis=0))
             Nint *= 2
             EE = np.zeros((1, Nint))
-
             for k in range(len(s_pass)):
                 Y = (C * (1.0 / (s_pass[k] - self.all_poles))) @ B + D
                 if parameter_type.lower() == "r":
@@ -2219,22 +2210,32 @@ class VectorFitting:
             s_pass_ind = np.zeros(shape=(len(s_pass)))
             if parameter_type.lower() == "r":
                 if np.max(EE[0]) > 1.0:
-                    print(f"{np.max(EE[0])=}")
                     s_pass_ind_2 = np.where(EE[0] == np.max(EE[0]))[0]
                 else:
                     s_pass_ind_2 = np.zeros(shape=(len(s_pass)))
+                if isinstance(s_pass_ind_2, (np.ndarray, list)):
+                    # if len(s_pass_ind_2) > 1:
+                    s_pass_ind_2 = s_pass_ind_2[0]
             else:
-                if np.min(EE[0]) < 0.0:
-                    s_pass_ind_2 = np.where(EE[0] == np.min(EE[0]))[0]
-                else:
-                    s_pass_ind_2 = np.zeros(shape=(len(s_pass)))
-            if isinstance(s_pass_ind_2, (np.ndarray, list)):
-                # if len(s_pass_ind_2) > 1:
-                s_pass_ind_2 = s_pass_ind_2[0]
+                for row in range(Nc):
+                    if EE[row, 0] < 0:
+                        s_pass_ind[0] = 1
+
+                for k in range(1, len(s_pass) - 1):
+                    for row in range(Nc):
+                        if EE[row, k] < 0:  # Violation
+                            if (
+                                EE[row, k] < EE[row, k - 1]
+                                and EE[row, k] < EE[row, k + 1]
+                            ):
+                                s_pass_ind[k] = 1
+
+                for s_p in s_pass[np.where(s_pass_ind == 1)[0]]:
+                    sss.append(s_p)
 
             # for s_p in s_pass[np.where(s_pass_ind == 1)[0]]:
             #     s.append(s_p)
-            sss.append(s_pass[s_pass_ind_2])
+            # sss.append(s_pass[s_pass_ind_2])
             if parameter_type == "r":
                 dum = np.max(EE[0], axis=0)
                 g_pass_2, ind = np.max(dum), np.where(dum == np.max(dum))[0][0]
