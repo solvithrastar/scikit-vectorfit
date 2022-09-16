@@ -1656,7 +1656,6 @@ class VectorFitting:
                     s_viol, g_pass, ss = self.violextrema(
                         violation_bands, parameter_type=parameter_type
                     )
-                    breakpoint()
                     s2 = np.sort(s_viol)
                     if parameter_type == "r":
                         if len(s2) == 0 and np.abs(D1) < 1.0:
@@ -2095,7 +2094,7 @@ class VectorFitting:
         if len(bigB) == 0:
             return Cnew, Dnew
         ff = np.zeros(len(H))
-        bigB = np.reshape(bigB, (len(H), len(bigC)))
+        bigB = np.reshape(bigB, (len(bigC), len(H)))
         if len(bigC.shape) > 1:
             if bigC.shape == (1, 1):
                 bigC = bigC[0]
@@ -2109,13 +2108,16 @@ class VectorFitting:
         #     # bigB = np.sqrt(1 - np.square(np.real(bigB)) + np.square(np.imag(bigB)))
         # else:
         #     bigB = np.real(bigB)
-        breakpoint()
+
         for col in range(len(H)):
             if len(bigB) > 0:
                 bigB[:, col] = bigB[:, col] / Escale[col]
 
-        dx, f, xu, iterations, lagrangian, iact = quadprog.solve_qp(H, ff, bigB, -bigC)
+        dx, f, xu, iterations, lagrangian, iact = quadprog.solve_qp(
+            H, ff, bigB.T, -bigC
+        )
         dx = dx / Escale
+
         Cnew = C.copy()
         Dnew = D.copy()
         bigV = bigV[0]
@@ -2208,8 +2210,6 @@ class VectorFitting:
                     old_T0 = np.zeros_like(T0)
                 old_T0 = T0
                 EE[:, k] = np.diag(EV)
-
-            breakpoint()
             # Identifying violations, picking minima for s2
             s_pass_ind = np.zeros(shape=(len(s_pass)))
             if parameter_type.lower() == "r":
@@ -2236,7 +2236,6 @@ class VectorFitting:
 
                 for s_p in s_pass[np.where(s_pass_ind == 1)[0]]:
                     sss.append(s_p)
-
             # for s_p in s_pass[np.where(s_pass_ind == 1)[0]]:
             #     s.append(s_p)
             # sss.append(s_pass[s_pass_ind_2])
