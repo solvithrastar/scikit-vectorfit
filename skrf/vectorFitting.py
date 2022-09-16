@@ -2094,7 +2094,7 @@ class VectorFitting:
         if len(bigB) == 0:
             return Cnew, Dnew
         ff = np.zeros(len(H))
-        bigB = np.reshape(bigB, (len(H), len(bigC)))
+        bigB = np.reshape(bigB, (len(bigC), len(H)))
         if len(bigC.shape) > 1:
             if bigC.shape == (1, 1):
                 bigC = bigC[0]
@@ -2108,12 +2108,16 @@ class VectorFitting:
         #     # bigB = np.sqrt(1 - np.square(np.real(bigB)) + np.square(np.imag(bigB)))
         # else:
         #     bigB = np.real(bigB)
+
         for col in range(len(H)):
             if len(bigB) > 0:
-                bigB[col] = bigB[col] / Escale[col]
+                bigB[:, col] = bigB[:, col] / Escale[col]
 
-        dx, f, xu, iterations, lagrangian, iact = quadprog.solve_qp(H, ff, bigB, -bigC)
+        dx, f, xu, iterations, lagrangian, iact = quadprog.solve_qp(
+            H, ff, bigB.T, -bigC
+        )
         dx = dx / Escale
+
         Cnew = C.copy()
         Dnew = D.copy()
         bigV = bigV[0]
@@ -2232,7 +2236,6 @@ class VectorFitting:
 
                 for s_p in s_pass[np.where(s_pass_ind == 1)[0]]:
                     sss.append(s_p)
-
             # for s_p in s_pass[np.where(s_pass_ind == 1)[0]]:
             #     s.append(s_p)
             # sss.append(s_pass[s_pass_ind_2])
