@@ -2275,21 +2275,58 @@ class VectorFitting:
                     BB = Q * Mmat2
                 else:
                     BB = Q @ Mmat2
-                delz = np.abs(Z)
-                violation = delz > 1
+                delz = Z
+                violation = np.abs(delz) > 1
                 # else:
                 #     delz = np.real(Z)
                 #     violation = delz < 0
                 # We need to be a bit different with bigC due to D
                 if violation:
+                    # We approximate abs(Y + dY) < 1 with four conditions
+                    # 1. Re(Y) + Re(dY) + Im(Y) + Im(dY) < 1
                     try:
-                        bigB = np.vstack((bigB, -BB))  # I'm putting -BB here, need to keep in mind
+                        bigB = np.vstack(
+                            (bigB, np.real(BB) + np.imag(BB))
+                        )  # I'm putting -BB here, need to keep in mind
                     except:
-                        bigB = -BB.copy()
+                        bigB = np.real(BB) + np.imag(BB)
                     try:
-                        bigC = np.vstack((bigC, 1 - delz - TOL))  # Make-ar thetta sense?
+                        bigC = np.vstack((bigC, 1 - np.real(delz) - np.imag(delz)))  # Make-ar thetta sense?
                     except:
-                        bigC = 1 - delz.copy() - TOL
+                        bigC = 1 - np.real(delz) - np.imag(delz)
+                    # 2. -Re(Y) + Re(dY) - Im(Y) + Im(dY) < 1
+                    try:
+                        bigB = np.vstack(
+                            (bigB, np.real(BB) + np.imag(BB))
+                        )  # I'm putting -BB here, need to keep in mind
+                    except:
+                        bigB = np.real(BB) + np.imag(BB)
+                    try:
+                        bigC = np.vstack((bigC, 1 + np.real(delz) + np.imag(delz)))  # Make-ar thetta sense?
+                    except:
+                        bigC = 1 + np.real(delz) + np.imag(delz)
+                    # 3. -Re(Y) + Re(dY) + Im(Y) + Im(dY) < 1
+                    try:
+                        bigB = np.vstack(
+                            (bigB, np.real(BB) + np.imag(BB))
+                        )  # I'm putting -BB here, need to keep in mind
+                    except:
+                        bigB = np.real(BB) + np.imag(BB)
+                    try:
+                        bigC = np.vstack((bigC, 1 + np.real(delz) - np.imag(delz)))  # Make-ar thetta sense?
+                    except:
+                        bigC = 1 - np.real(delz) + np.imag(delz)
+                    # 4. Re(Y) + Re(dY) - Im(Y) + Im(dY) < 1
+                    try:
+                        bigB = np.vstack(
+                            (bigB, np.real(BB) + np.imag(BB))
+                        )  # I'm putting -BB here, need to keep in mind
+                    except:
+                        bigB = np.real(BB) + np.imag(BB)
+                    try:
+                        bigC = np.vstack((bigC, 1 - np.real(delz) + np.imag(delz)))  # Make-ar thetta sense?
+                    except:
+                        bigC = 1 - np.real(delz) + np.imag(delz)
                     # else:
                     #     try:
                     #         bigB = np.vstack((bigB, BB))
@@ -2356,13 +2393,48 @@ class VectorFitting:
             # We need to be a bit different with bigC due to D
             if violation:
                 try:
-                    bigB = np.vstack((bigB, -BB))
+                    bigB = np.vstack((bigB, np.real(BB) + np.imag(BB)))  # I'm putting -BB here, need to keep in mind
                 except:
-                    bigB = -BB.copy()
+                    bigB = np.real(BB) + np.imag(BB)
                 try:
-                    bigC = np.vstack((bigC, 1 - delz - TOL))
+                    bigC = np.vstack((bigC, 1 - np.real(delz) - np.imag(delz)))  # Make-ar thetta sense?
                 except:
-                    bigC = 1 - delz.copy() - TOL
+                    bigC = 1 - np.real(delz) - np.imag(delz)
+                # 2. -Re(Y) + Re(dY) - Im(Y) + Im(dY) < 1
+                try:
+                    bigB = np.vstack((bigB, np.real(BB) + np.imag(BB)))  # I'm putting -BB here, need to keep in mind
+                except:
+                    bigB = np.real(BB) + np.imag(BB)
+                try:
+                    bigC = np.vstack((bigC, 1 + np.real(delz) + np.imag(delz)))  # Make-ar thetta sense?
+                except:
+                    bigC = 1 + np.real(delz) + np.imag(delz)
+                # 3. -Re(Y) + Re(dY) + Im(Y) + Im(dY) < 1
+                try:
+                    bigB = np.vstack((bigB, np.real(BB) + np.imag(BB)))  # I'm putting -BB here, need to keep in mind
+                except:
+                    bigB = np.real(BB) + np.imag(BB)
+                try:
+                    bigC = np.vstack((bigC, 1 + np.real(delz) - np.imag(delz)))  # Make-ar thetta sense?
+                except:
+                    bigC = 1 - np.real(delz) + np.imag(delz)
+                # 4. Re(Y) + Re(dY) - Im(Y) + Im(dY) < 1
+                try:
+                    bigB = np.vstack((bigB, np.real(BB) + np.imag(BB)))  # I'm putting -BB here, need to keep in mind
+                except:
+                    bigB = np.real(BB) + np.imag(BB)
+                try:
+                    bigC = np.vstack((bigC, 1 - np.real(delz) + np.imag(delz)))  # Make-ar thetta sense?
+                except:
+                    bigC = 1 - np.real(delz) + np.imag(delz)
+                # try:
+                #     bigB = np.vstack((bigB, -BB))
+                # except:
+                #     bigB = -BB.copy()
+                # try:
+                #     bigC = np.vstack((bigC, 1 - delz - TOL))
+                # except:
+                #     bigC = 1 - delz.copy() - TOL
                 # else:
                 #     try:
                 #         bigB = np.vstack((bigB, BB))
@@ -2385,11 +2457,11 @@ class VectorFitting:
             #         bigC = -TOL + delz.copy()
             #     viol_G.append(delz)
         # if parameter_type == "r":
-        try:
-            bigB = np.abs(bigB)
-        except:
-            pass
-            # bigB = np.sqrt(1 - np.square(np.real(bigB)) + np.square(np.imag(bigB)))
+        # try:
+        #     bigB = np.abs(bigB)
+        # except:
+        #     pass
+        # bigB = np.sqrt(1 - np.square(np.real(bigB)) + np.square(np.imag(bigB)))
         if Dflag:  # This is the only place where I need to add the extra D condition
             # if parameter_type.lower() == "r":
             violation = np.abs(eigD) > 1
@@ -2456,7 +2528,7 @@ class VectorFitting:
             if len(bigB) > 0:
                 bigB[:, col] = bigB[:, col] / Escale[col]
 
-        dx, f, xu, iterations, lagrangian, iact = quadprog.solve_qp(H, ff, bigB.T, -bigC)
+        dx, f, xu, iterations, lagrangian, iact = quadprog.solve_qp(H, ff, -bigB.T, -bigC)
         dx = dx / Escale
 
         Cnew = C.copy()
