@@ -2161,7 +2161,7 @@ class VectorFitting:
                 Mmat[offs] = gamm * weight * dum
                 offs += 1
 
-            if Dflag:
+            if Dflag:  # I probably need to add to this one, no don't think so
                 if VD == 1:
                     gamm = VD
                 else:
@@ -2216,7 +2216,7 @@ class VectorFitting:
                     gamm = V @ invV
                 Mmat[m] = gamm * weight * dum
                 offs += 1
-            if Dflag:
+            if Dflag:  # I might need to add to this one here, nope I don't think so
                 if VD == 1:
                     gamm = VD
                 else:
@@ -2390,7 +2390,7 @@ class VectorFitting:
         except:
             pass
             # bigB = np.sqrt(1 - np.square(np.real(bigB)) + np.square(np.imag(bigB)))
-        if Dflag:
+        if Dflag:  # This is the only place where I need to add the extra D condition
             # if parameter_type.lower() == "r":
             violation = np.abs(eigD) > 1
             # else:
@@ -2399,14 +2399,27 @@ class VectorFitting:
                 dum = np.zeros((N + Dflag))
                 dum[N] = 1
                 # if parameter_type.lower() == "r":
+
+                # First condition: D < 1 - tol
+                try:
+                    bigB = np.vstack((bigB, dum))
+                except:
+                    bigB = dum.copy()
+                try:
+                    bigC = np.vstack((bigC, 1 - eigD - TOL))
+                except:
+                    bigC = 1 - eigD - TOL
+
+                # 2nd condition: D > -1 + tol
                 try:
                     bigB = np.vstack((bigB, -dum))
                 except:
                     bigB = -dum.copy()
                 try:
-                    bigC = np.vstack((bigC, 1 - np.abs(eigD) - TOL))
+                    bigC = np.vstack((bigC, 1 + eigD - TOL))
                 except:
-                    bigC = 1 - np.abs(eigD) - TOL
+                    bigC = 1 + eigD - TOL
+
                 # else:
                 #     try:
                 #         bigB = np.vstack((bigB, dum))
