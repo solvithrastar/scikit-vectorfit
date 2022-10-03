@@ -1172,9 +1172,6 @@ class VectorFitting:
 
         S = np.abs(self._get_s_from_ABCDE(freqs=freqtest, A=A, B=B, C=C, D=D, E=E))
         non_passive = np.where(S > 1.0)[0]
-        print(f"{non_passive=}")
-        print(f"{S[non_passive]=}")
-        print(f"{freqtest[non_passive]=}")
         if len(non_passive) == 0:
             return np.array(wintervals)
 
@@ -1203,7 +1200,6 @@ class VectorFitting:
                 if max_freq == 2 * np.pi * np.max(freqtest):
                     max_freq = 1e16
             freq_intervals[_i, :] = np.array([min_freq, max_freq])
-        print(f"Violations: {freq_intervals=}")
         return freq_intervals
 
     def _find_limits_of_violation(self, violations: np.ndarray) -> List[Tuple]:
@@ -1563,11 +1559,12 @@ class VectorFitting:
         TOLGD = 1e-6
         # Outer loop
         iter_out = 0
-        niter_out = 400
+        niter_out = 60
         niter_in = 2
         break_outer = False
         s = 1j * 2 * np.pi * self.network.f
         while iter_out <= niter_out:
+            logging.info(f"Passivity enforcing Iteration: {iter_out}")
             if break_outer:
                 break
             s3 = []
@@ -2291,9 +2288,9 @@ class VectorFitting:
                     except:
                         bigB = np.real(BB) + np.imag(BB)
                     try:
-                        bigC = np.vstack((bigC, 1 - np.real(delz) - np.imag(delz)))  # Make-ar thetta sense?
+                        bigC = np.vstack((bigC, 1 - np.real(delz) - np.imag(delz) - TOL))  # Make-ar thetta sense?
                     except:
-                        bigC = 1 - np.real(delz) - np.imag(delz)
+                        bigC = 1 - np.real(delz) - np.imag(delz) - TOL
                     # 2. -Re(Y) + Re(dY) - Im(Y) + Im(dY) < 1
                     try:
                         bigB = np.vstack(
@@ -2302,9 +2299,9 @@ class VectorFitting:
                     except:
                         bigB = np.real(BB) + np.imag(BB)
                     try:
-                        bigC = np.vstack((bigC, 1 + np.real(delz) + np.imag(delz)))  # Make-ar thetta sense?
+                        bigC = np.vstack((bigC, 1 + np.real(delz) + np.imag(delz) - TOL))  # Make-ar thetta sense?
                     except:
-                        bigC = 1 + np.real(delz) + np.imag(delz)
+                        bigC = 1 + np.real(delz) + np.imag(delz) - TOL
                     # 3. -Re(Y) + Re(dY) + Im(Y) + Im(dY) < 1
                     try:
                         bigB = np.vstack(
@@ -2313,9 +2310,9 @@ class VectorFitting:
                     except:
                         bigB = np.real(BB) + np.imag(BB)
                     try:
-                        bigC = np.vstack((bigC, 1 + np.real(delz) - np.imag(delz)))  # Make-ar thetta sense?
+                        bigC = np.vstack((bigC, 1 + np.real(delz) - np.imag(delz) - TOL))  # Make-ar thetta sense?
                     except:
-                        bigC = 1 - np.real(delz) + np.imag(delz)
+                        bigC = 1 - np.real(delz) + np.imag(delz) - TOL
                     # 4. Re(Y) + Re(dY) - Im(Y) + Im(dY) < 1
                     try:
                         bigB = np.vstack(
@@ -2324,9 +2321,9 @@ class VectorFitting:
                     except:
                         bigB = np.real(BB) + np.imag(BB)
                     try:
-                        bigC = np.vstack((bigC, 1 - np.real(delz) + np.imag(delz)))  # Make-ar thetta sense?
+                        bigC = np.vstack((bigC, 1 - np.real(delz) + np.imag(delz) - TOL))  # Make-ar thetta sense?
                     except:
-                        bigC = 1 - np.real(delz) + np.imag(delz)
+                        bigC = 1 - np.real(delz) + np.imag(delz) - TOL
                     # else:
                     #     try:
                     #         bigB = np.vstack((bigB, BB))
@@ -2397,16 +2394,16 @@ class VectorFitting:
                 except:
                     bigB = np.real(BB) + np.imag(BB)
                 try:
-                    bigC = np.vstack((bigC, 1 - np.real(delz) - np.imag(delz)))  # Make-ar thetta sense?
+                    bigC = np.vstack((bigC, 1 - np.real(delz) - np.imag(delz) - TOL))  # Make-ar thetta sense?
                 except:
-                    bigC = 1 - np.real(delz) - np.imag(delz)
+                    bigC = 1 - np.real(delz) - np.imag(delz) - TOL
                 # 2. -Re(Y) + Re(dY) - Im(Y) + Im(dY) < 1
                 try:
                     bigB = np.vstack((bigB, np.real(BB) + np.imag(BB)))  # I'm putting -BB here, need to keep in mind
                 except:
                     bigB = np.real(BB) + np.imag(BB)
                 try:
-                    bigC = np.vstack((bigC, 1 + np.real(delz) + np.imag(delz)))  # Make-ar thetta sense?
+                    bigC = np.vstack((bigC, 1 + np.real(delz) + np.imag(delz) - TOL))  # Make-ar thetta sense?
                 except:
                     bigC = 1 + np.real(delz) + np.imag(delz)
                 # 3. -Re(Y) + Re(dY) + Im(Y) + Im(dY) < 1
@@ -2415,18 +2412,18 @@ class VectorFitting:
                 except:
                     bigB = np.real(BB) + np.imag(BB)
                 try:
-                    bigC = np.vstack((bigC, 1 + np.real(delz) - np.imag(delz)))  # Make-ar thetta sense?
+                    bigC = np.vstack((bigC, 1 + np.real(delz) - np.imag(delz) - TOL))  # Make-ar thetta sense?
                 except:
-                    bigC = 1 - np.real(delz) + np.imag(delz)
+                    bigC = 1 - np.real(delz) + np.imag(delz) - TOL
                 # 4. Re(Y) + Re(dY) - Im(Y) + Im(dY) < 1
                 try:
                     bigB = np.vstack((bigB, np.real(BB) + np.imag(BB)))  # I'm putting -BB here, need to keep in mind
                 except:
                     bigB = np.real(BB) + np.imag(BB)
                 try:
-                    bigC = np.vstack((bigC, 1 - np.real(delz) + np.imag(delz)))  # Make-ar thetta sense?
+                    bigC = np.vstack((bigC, 1 - np.real(delz) + np.imag(delz) - TOL))  # Make-ar thetta sense?
                 except:
-                    bigC = 1 - np.real(delz) + np.imag(delz)
+                    bigC = 1 - np.real(delz) + np.imag(delz) - TOL
                 # try:
                 #     bigB = np.vstack((bigB, -BB))
                 # except:
@@ -2527,7 +2524,6 @@ class VectorFitting:
         for col in range(len(H)):
             if len(bigB) > 0:
                 bigB[:, col] = bigB[:, col] / Escale[col]
-
         dx, f, xu, iterations, lagrangian, iact = quadprog.solve_qp(H, ff, -bigB.T, -bigC)
         dx = dx / Escale
 
@@ -2637,7 +2633,6 @@ class VectorFitting:
                 else:
                     if EE[row, 0] < 0:
                         s_pass_ind[0] = 1
-
             for k in range(1, len(s_pass) - 1):
                 for row in range(Nc):
                     if parameter_type == "r":
@@ -2648,6 +2643,10 @@ class VectorFitting:
                         if EE[row, k] < 0:  # Violation
                             if EE[row, k] < EE[row, k - 1] and EE[row, k] < EE[row, k + 1]:
                                 s_pass_ind[k] = 1
+            # if parameter_type == "r":
+            #     flotti = np.where(EE == np.max(EE))[0]
+            #     s_pass_ind[flotti] = 1
+            # breakpoint()
             for s_p in s_pass[np.where(s_pass_ind == 1)[0]]:
                 sss.append(s_p)
             # for s_p in s_pass[np.where(s_pass_ind == 1)[0]]:
