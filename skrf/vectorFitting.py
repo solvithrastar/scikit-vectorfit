@@ -225,9 +225,15 @@ class VectorFitting:
 
         fmin = np.amin(freqs_norm)
         fmax = np.amax(freqs_norm)
-        if init_pole_spacing == "log":
+        if init_pole_spacing == "log" and fmin == 0:
+            pole_freqs_real = np.geomspace(fmin + 0.1, fmax, n_poles_real)
+            pole_freqs_cmplx = np.geomspace(fmin + 0.1, fmax, n_poles_cmplx)
+        elif init_pole_spacing == "log":
             pole_freqs_real = np.geomspace(fmin, fmax, n_poles_real)
             pole_freqs_cmplx = np.geomspace(fmin, fmax, n_poles_cmplx)
+        elif init_pole_spacing == "lin" and fmin == 0:
+            pole_freqs_real = np.linspace(fmin + 0.1, fmax, n_poles_real)
+            pole_freqs_cmplx = np.linspace(fmin + 0.1, fmax, n_poles_cmplx)
         elif init_pole_spacing == "lin":
             pole_freqs_real = np.linspace(fmin, fmax, n_poles_real)
             pole_freqs_cmplx = np.linspace(fmin, fmax, n_poles_cmplx)
@@ -1160,7 +1166,8 @@ class VectorFitting:
 
         wintervals = []
         freq = self.network.f
-        freqtest = np.linspace(0.0, np.max(freq) * 2, 200)
+        freqtest = np.geomspace(1.0, np.max(freq), 200)
+        freqtest = np.insert(freqtest, 0, 0.0)
         A, B, C, D, E = self._get_ABCDE()
 
         S = np.abs(self._get_s_from_ABCDE(freqs=freqtest, A=A, B=B, C=C, D=D, E=E))
@@ -1552,11 +1559,12 @@ class VectorFitting:
         TOLGD = 1e-6
         # Outer loop
         iter_out = 0
-        niter_out = 400
+        niter_out = 60
         niter_in = 2
         break_outer = False
         s = 1j * 2 * np.pi * self.network.f
         while iter_out <= niter_out:
+            logging.info(f"Passivity enforcing Iteration: {iter_out}")
             if break_outer:
                 break
             s3 = []
@@ -1584,7 +1592,10 @@ class VectorFitting:
                     else:
                         if len(s2) == 0 and np.all(np.linalg.eigvals(D1) > 0):
                             break
-                C1, D1 = self.FRPY(A0, B0, C0, D0, s, s2, s3, parameter_type=parameter_type)
+                if parameter_type == "r":
+                    C1, D1 = self.FRPR(A0, B0, C0, D0, s, s2, s3)
+                else:
+                    C1, D1 = self.FRPY(A0, B0, C0, D0, s, s2, s3, parameter_type=parameter_type)
                 k = 0
                 z = 0
                 flag = False
@@ -2053,6 +2064,514 @@ class VectorFitting:
 
         return Cnew, Dnew
 
+    def FRPR(self, A, B, C, D, s, s2, s3) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Function which modifies the elements in the C and D to enforce passivity
+        of Y-parameter model at frequency samples in s2 and s3, such that the perturbation
+        of the model is minimized at samples in s.
+
+        :return: Updated C and D matrices
+        :rtype: Tuple[np.ndarray, np.ndarray]
+        """
+
+        Cnew, Dnew = C.copy(), D.copy()
+        N = len(self.all_poles)
+
+        d = np.linalg.eigvals(D)
+        violation = np.abs(d) > 1.0
+        if violation:
+            Dflag = True
+            eigD, VD = np.linalg.eig(D)
+            invVD = np.linalg.inv(VD)
+        else:
+            Dflag = False
+
+        TOL = 1e-6
+        Ns = len(s)
+        Ns2 = len(s2)
+        Nc = len(D)  # This is 1 in all my use cases
+        Nc2 = Nc * Nc
+        I = np.identity(Nc)
+        Mmat = np.zeros(N + Dflag, dtype=complex)
+
+        cindex = np.zeros(N)
+        for m in range(N):
+            if np.imag(self.all_poles[m]) != 0:
+                if m == 0:
+                    cindex[m] = 1
+                else:
+                    if cindex[m - 1] == 0 or cindex[m - 1] == 2:
+                        cindex[m] = 1
+                        cindex[m + 1] = 2
+                    else:
+                        cindex[m] = 2
+
+        bigA = np.zeros((Ns, (N + Dflag)), dtype=complex)
+        bigV = np.zeros((1, N))
+        biginvV = np.zeros((1, N))
+        bigD = np.zeros((1, N))
+        for m in range(N):
+            R = C[:, m].copy()
+            if cindex[m] == 0:
+                R = R
+            elif cindex[m] == 1:
+                R = np.real(R)
+            else:
+                R = np.imag(R)
+            if len(R) == 1:
+                D_val, V = R, 1
+            else:
+                D_val, V = np.linalg.eig(R)
+            bigV[0, m] = V
+            if V == 1:
+                biginvV[0, m] = 1 / V
+            else:
+                biginvV[0, m] = np.linalg.inv(V)
+
+            bigD[:, m] = D_val
+
+        for k in range(Ns):
+            sk = s[k]
+            tell = 0
+            offs = 0
+            Yfit = self.fitcalcPRE(sk, C, D)
+
+            weight = 1 / np.abs(Yfit[0])
+
+            for m in range(N):
+                V = np.squeeze(bigV[:, m])
+                if V == 1:
+                    invV = 1
+                else:
+                    invV = np.linalg.inv(V)
+                if cindex[m] == 0:
+                    dum = 1 / (sk - self.all_poles[m])
+                elif cindex[m] == 1:
+                    dum = 1 / (sk - self.all_poles[m]) + 1 / (sk - np.conj(self.all_poles[m]))
+                else:
+                    dum = 1j / (sk - np.conj(self.all_poles[m])) - 1j / (sk - self.all_poles[m])
+
+                if V == 1:
+                    gamm = V
+                else:
+                    gamm = V @ invV
+                Mmat[offs] = gamm * weight * dum
+                offs += 1
+
+            if Dflag:  # I probably need to add to this one, no don't think so
+                if VD == 1:
+                    gamm = VD
+                else:
+                    gamm = VD @ invV
+                gamm = VD @ invVD
+                Mmat[offs] = gamm * weight
+            bigA[k, :] = Mmat
+
+        # Now we introduce samples outside LS region: One sample per pole (s4)
+        s4 = []
+        # s4 = np.zeros(len(self.all_poles), dtype=complex)
+        tell = 0
+        for m in range(len(self.all_poles)):
+            if cindex[m] == 0:
+                if (np.abs(self.all_poles[m]) > s[Ns - 1] / 1j) or (np.abs(self.all_poles[m]) < s[0] / 1j):
+                    s4.append(1j * np.abs(self.all_poles[m]))
+                    tell += 1
+            elif cindex[m] == 1:
+                if (
+                    np.abs(np.imag(self.all_poles[m]) > s[Ns - 1] / 1j)
+                    or np.abs(np.imag(self.all_poles[m])) < s[0] / 1j
+                ):
+                    s4.append(1j * np.abs(np.imag(self.all_poles[m])))
+                    tell += 1
+        Ns4 = len(s4)
+
+        bigA2 = np.empty((Ns4, (N + Dflag)), dtype=complex)
+        weightfactor = 1e-3  # Weightfactor for out of band frequencies
+        for k in range(Ns4):
+            sk = s4[k]
+            tell = 0
+            offs = 0
+            Yfit = self.fitcalcPRE(sk, C, D)
+            weight = 1 / np.abs(Yfit[0])
+            weight = weight * weightfactor
+
+            for m in range(N):
+                V = np.squeeze(bigV[:, m])
+                if V == 1:
+                    invV = 1
+                else:
+                    invV = np.linalg.inv(V)
+                if cindex[m] == 0:
+                    dum = gamm / (sk - self.all_poles[m])
+                elif cindex[m] == 1:
+                    dum = gamm * (1 / (sk - self.all_poles[m]) + 1 / (sk - np.conj(self.all_poles[m])))
+                else:
+                    dum = gamm * (1j / (sk - np.conj(self.all_poles[m])) - 1j / (sk - self.all_poles[m]))
+                if V == 1:
+                    gamm = V
+                else:
+                    gamm = V @ invV
+                Mmat[m] = gamm * weight * dum
+                offs += 1
+            if Dflag:  # I might need to add to this one here, nope I don't think so
+                if VD == 1:
+                    gamm = VD
+                else:
+                    gamm = VD @ invVD
+                Mmat[offs] = gamm * weight
+            bigA2[k, :] = Mmat
+        bigA = np.vstack((bigA, bigA2))
+
+        bigA = np.vstack((np.real(bigA), np.imag(bigA)))  # Is this something I need to think about?
+        Acol = len(bigA[0, :])
+        Escale = np.zeros(Acol)
+        for col in range(Acol):
+            Escale[col] = np.linalg.norm(bigA[:, col], ord=2)
+            bigA[:, col] = bigA[:, col] / Escale[col]
+        H = bigA.T @ bigA
+
+        Mmat2 = np.zeros((N + Dflag), dtype=complex)
+        viol_G = []
+        viol_D = []
+        # Loop for constraint problem, type 1 (violating eigenvalues in s2)
+        for k in range(Ns2):
+            sk = s2[k]
+            Y = D + np.sum(np.squeeze(C[0]) / (sk - self.all_poles))
+            Z = np.abs(Y)
+            violation = Z > 1.0
+
+            if violation:  # Any violations
+                offs = 0
+                for m in range(N):
+                    VV = bigV[:, m]
+                    invVV = biginvV[:, m]
+                    if VV == 1:
+                        gamm = VV
+                    else:
+                        gamm = VV @ invVV
+                    if cindex[m] == 0:
+                        Mmat2[offs] = gamm / (sk - self.all_poles[m])
+                    elif cindex[m] == 1:
+                        Mmat2[offs] = gamm * (1 / (sk - self.all_poles[m]) + 1 / (sk - np.conj(self.all_poles[m])))
+                    else:
+                        Mmat2[offs] = gamm * (1j / (sk - np.conj(self.all_poles[m])) - 1j / (sk - self.all_poles[m]))
+                    offs += 1
+                if Dflag:
+                    if VD == 1:
+                        gamm = VD
+                    else:
+                        gamm = VD @ invVD
+                    Mmat2[offs] = gamm
+                if V == 1:
+                    V1 = 1
+                else:
+                    V1 = V[:, 0]
+                qij = V1**2
+                Q = qij
+                if Q == 1:
+                    BB = Q * Mmat2
+                else:
+                    BB = Q @ Mmat2
+                delz = Z
+                violation = np.abs(delz) > 1
+                # else:
+                #     delz = np.real(Z)
+                #     violation = delz < 0
+                # We need to be a bit different with bigC due to D
+                if violation:
+                    # We approximate abs(Y + dY) < 1 with four conditions
+                    # 1. Re(Y) + Re(dY) + Im(Y) + Im(dY) < 1
+                    try:
+                        bigB = np.vstack(
+                            (bigB, np.real(BB) + np.imag(BB))
+                        )  # I'm putting -BB here, need to keep in mind
+                    except:
+                        bigB = np.real(BB) + np.imag(BB)
+                    try:
+                        bigC = np.vstack((bigC, 1 - np.real(delz) - np.imag(delz) - TOL))  # Make-ar thetta sense?
+                    except:
+                        bigC = 1 - np.real(delz) - np.imag(delz) - TOL
+                    # 2. -Re(Y) + Re(dY) - Im(Y) + Im(dY) < 1
+                    try:
+                        bigB = np.vstack(
+                            (bigB, np.real(BB) + np.imag(BB))
+                        )  # I'm putting -BB here, need to keep in mind
+                    except:
+                        bigB = np.real(BB) + np.imag(BB)
+                    try:
+                        bigC = np.vstack((bigC, 1 + np.real(delz) + np.imag(delz) - TOL))  # Make-ar thetta sense?
+                    except:
+                        bigC = 1 + np.real(delz) + np.imag(delz) - TOL
+                    # 3. -Re(Y) + Re(dY) + Im(Y) + Im(dY) < 1
+                    try:
+                        bigB = np.vstack(
+                            (bigB, np.real(BB) + np.imag(BB))
+                        )  # I'm putting -BB here, need to keep in mind
+                    except:
+                        bigB = np.real(BB) + np.imag(BB)
+                    try:
+                        bigC = np.vstack((bigC, 1 + np.real(delz) - np.imag(delz) - TOL))  # Make-ar thetta sense?
+                    except:
+                        bigC = 1 - np.real(delz) + np.imag(delz) - TOL
+                    # 4. Re(Y) + Re(dY) - Im(Y) + Im(dY) < 1
+                    try:
+                        bigB = np.vstack(
+                            (bigB, np.real(BB) + np.imag(BB))
+                        )  # I'm putting -BB here, need to keep in mind
+                    except:
+                        bigB = np.real(BB) + np.imag(BB)
+                    try:
+                        bigC = np.vstack((bigC, 1 - np.real(delz) + np.imag(delz) - TOL))  # Make-ar thetta sense?
+                    except:
+                        bigC = 1 - np.real(delz) + np.imag(delz) - TOL
+                    # else:
+                    #     try:
+                    #         bigB = np.vstack((bigB, BB))
+                    #     except:
+                    #         bigB = BB.copy()
+                    #     try:
+                    #         bigC = np.vstack((bigC, -TOL + delz))
+                    #     except:
+                    #         bigC = -TOL + delz.copy()
+                    viol_G.append(delz)
+
+        # Loop for constraint problem (Type 2): all eigenvalues in s3
+        Ns3 = len(s3)
+        for k in range(Ns3):
+            sk = s3[k]
+            Y = D + np.sum(np.squeeze(C[0]) / (sk - self.all_poles))
+            # if parameter_type.lower() == "r":
+            Z = np.abs(Y)
+            # else:
+            #     Z, eigvec = np.linalg.eig(np.real(Y))
+
+            tell = 0
+            offs = 0
+
+            for m in range(N):
+                VV = bigV[:, m]
+                invVV = biginvV[:, m]
+                if VV == 1:
+                    gamm = VV
+                else:
+                    gamm = VV @ invVV
+                if cindex[m] == 0:
+                    Mmat2[offs] = gamm / (sk - self.all_poles[m])
+                elif cindex[m] == 1:
+                    Mmat2[offs] = gamm * (1 / (sk - self.all_poles[m]) + 1 / (sk - np.conj(self.all_poles[m])))
+                else:
+                    Mmat2[offs] = gamm * (1j / (sk - np.conj(self.all_poles[m])) - 1j / (sk - self.all_poles[m]))
+                offs += 1
+
+                tell = 0
+            if Dflag:
+                if VD == 1:
+                    gamm = VD
+                else:
+                    gamm = VD[:, 0] @ invVD[0, :]
+                Mmat2[offs] = gamm
+            if V == 1:
+                V1 = 1
+            else:
+                V1 = V[:, 0]
+            qij = V1**2
+            Q = qij
+            if Q == 1:
+                BB = Q * Mmat2
+            else:
+                BB = Q @ Mmat2
+
+            # if parameter_type.lower() == "r":
+            delz = np.abs(Z)
+            violation = delz > 1
+            # else:
+            #     delz = np.real(Z)
+            #     violation = delz < 0
+            # We need to be a bit different with bigC due to D
+            if violation:
+                try:
+                    bigB = np.vstack((bigB, np.real(BB) + np.imag(BB)))  # I'm putting -BB here, need to keep in mind
+                except:
+                    bigB = np.real(BB) + np.imag(BB)
+                try:
+                    bigC = np.vstack((bigC, 1 - np.real(delz) - np.imag(delz) - TOL))  # Make-ar thetta sense?
+                except:
+                    bigC = 1 - np.real(delz) - np.imag(delz) - TOL
+                # 2. -Re(Y) + Re(dY) - Im(Y) + Im(dY) < 1
+                try:
+                    bigB = np.vstack((bigB, np.real(BB) + np.imag(BB)))  # I'm putting -BB here, need to keep in mind
+                except:
+                    bigB = np.real(BB) + np.imag(BB)
+                try:
+                    bigC = np.vstack((bigC, 1 + np.real(delz) + np.imag(delz) - TOL))  # Make-ar thetta sense?
+                except:
+                    bigC = 1 + np.real(delz) + np.imag(delz)
+                # 3. -Re(Y) + Re(dY) + Im(Y) + Im(dY) < 1
+                try:
+                    bigB = np.vstack((bigB, np.real(BB) + np.imag(BB)))  # I'm putting -BB here, need to keep in mind
+                except:
+                    bigB = np.real(BB) + np.imag(BB)
+                try:
+                    bigC = np.vstack((bigC, 1 + np.real(delz) - np.imag(delz) - TOL))  # Make-ar thetta sense?
+                except:
+                    bigC = 1 - np.real(delz) + np.imag(delz) - TOL
+                # 4. Re(Y) + Re(dY) - Im(Y) + Im(dY) < 1
+                try:
+                    bigB = np.vstack((bigB, np.real(BB) + np.imag(BB)))  # I'm putting -BB here, need to keep in mind
+                except:
+                    bigB = np.real(BB) + np.imag(BB)
+                try:
+                    bigC = np.vstack((bigC, 1 - np.real(delz) + np.imag(delz) - TOL))  # Make-ar thetta sense?
+                except:
+                    bigC = 1 - np.real(delz) + np.imag(delz) - TOL
+                # try:
+                #     bigB = np.vstack((bigB, -BB))
+                # except:
+                #     bigB = -BB.copy()
+                # try:
+                #     bigC = np.vstack((bigC, 1 - delz - TOL))
+                # except:
+                #     bigC = 1 - delz.copy() - TOL
+                # else:
+                #     try:
+                #         bigB = np.vstack((bigB, BB))
+                #     except:
+                #         bigB = BB.copy()
+                #     try:
+                #         bigC = np.vstack((bigC, -TOL + delz))
+                #     except:
+                #         bigC = -TOL + delz.copy()
+                viol_G.append(delz)
+            # delz = np.real(Z)
+            # if delz < 0:
+            #     try:
+            #         bigB = np.vstack((bigB, BB))
+            #     except:
+            #         bigB = BB.copy()
+            #     try:
+            #         bigC = np.vstack((bigC, -TOL + delz))
+            #     except:
+            #         bigC = -TOL + delz.copy()
+            #     viol_G.append(delz)
+        # if parameter_type == "r":
+        # try:
+        #     bigB = np.abs(bigB)
+        # except:
+        #     pass
+        # bigB = np.sqrt(1 - np.square(np.real(bigB)) + np.square(np.imag(bigB)))
+        if Dflag:  # This is the only place where I need to add the extra D condition
+            # if parameter_type.lower() == "r":
+            violation = np.abs(eigD) > 1
+            # else:
+            #     violation = eigD < 0
+            if violation:
+                dum = np.zeros((N + Dflag))
+                dum[N] = 1
+                # if parameter_type.lower() == "r":
+
+                # First condition: D < 1 - tol
+                try:
+                    bigB = np.vstack((bigB, dum))
+                except:
+                    bigB = dum.copy()
+                try:
+                    bigC = np.vstack((bigC, 1 - eigD - TOL))
+                except:
+                    bigC = 1 - eigD - TOL
+
+                # 2nd condition: D > -1 + tol
+                try:
+                    bigB = np.vstack((bigB, -dum))
+                except:
+                    bigB = -dum.copy()
+                try:
+                    bigC = np.vstack((bigC, 1 + eigD - TOL))
+                except:
+                    bigC = 1 + eigD - TOL
+
+                # else:
+                #     try:
+                #         bigB = np.vstack((bigB, dum))
+                #     except:
+                #         bigB = dum.copy()
+                #     try:
+                #         bigC = np.vstack((bigC, -TOL + eigD))
+                #     except:
+                #         bigC = -TOL + eigD.copy()
+                viol_G.append(eigD)
+                viol_D.append(eigD)
+
+        if len(bigB) == 0:
+            return Cnew, Dnew
+        ff = np.zeros(len(H))
+        bigB = np.reshape(bigB, (len(bigC), len(H)))
+        if len(bigC.shape) > 1:
+            if bigC.shape == (1, 1):
+                bigC = bigC[0]
+            else:
+                bigC = np.squeeze(bigC)
+
+        # I have to take a look there what to do regarding the commented block below
+
+        # if parameter_type != "r":
+        # bigB = np.real(bigB)
+        # if parameter_type == "r":
+        #     bigB = -np.abs(bigB)
+        #     # bigB = np.sqrt(1 - np.square(np.real(bigB)) + np.square(np.imag(bigB)))
+        # else:
+        #     bigB = np.real(bigB)
+
+        for col in range(len(H)):
+            if len(bigB) > 0:
+                bigB[:, col] = bigB[:, col] / Escale[col]
+        dx, f, xu, iterations, lagrangian, iact = quadprog.solve_qp(H, ff, -bigB.T, -bigC)
+        dx = dx / Escale
+
+        Cnew = C.copy()
+        Dnew = D.copy()
+        bigV = bigV[0]
+        biginvV = biginvV[0]
+        for m in range(N):
+            if cindex[m] == 0:
+                if isinstance(dx[m], float):
+                    Diff1 = dx[m]
+                    Cnew[:, m] = Cnew[:, m] + bigV[m] * Diff1 * biginvV[m]
+                else:
+                    Diff1 = np.diag(np.array(dx[m]))
+                    Cnew[:, m] = Cnew[:, m] + bigV[:, m] @ Diff1 @ biginvV[:, m]
+            elif cindex[m] == 1:
+                GAMM1 = bigV[m]
+                GAMM2 = bigV[m + 1]
+                invGAMM1 = biginvV[m]
+                invGAMM2 = biginvV[(m + 1)]
+
+                R1 = np.real(C[:, m])
+                R2 = np.imag(C[:, m])
+                if isinstance(dx[m], float):
+                    Diff1 = dx[m]
+                    Diff2 = dx[m + 1]
+                    R1new = R1 + GAMM1 * Diff1 * invGAMM1
+                    R2new = R2 + GAMM2 * Diff2 * invGAMM2
+                else:
+                    Diff1 = np.diag(np.array(dx[m]))
+                    Diff2 = np.diag(np.array(dx[m + 1]))
+                    R1new = R1 + GAMM1 @ Diff1 @ invGAMM1
+                    R2new = R2 + GAMM2 @ Diff2 @ invGAMM2
+                Cnew[:, m] = R1new + 1j * R2new
+                Cnew[:, m + 1] = R1new - 1j * R2new
+        if Dflag:
+            if isinstance(dx[N], float):
+                DD = dx[N]
+                Dnew = Dnew + VD * DD * invVD
+            else:
+                DD = np.diag(dx[N])
+                Dnew = Dnew + VD @ DD @ invVD
+
+            Dnew = (Dnew + Dnew.T) / 2
+        for m in range(N):
+            Cnew[:, m] = (Cnew[:, m] + Cnew[:, m].T) / 2
+        return Cnew, Dnew
+
     def fitcalcPRE(self, sk, C, D):
         N = len(self.poles)
         Y = D + np.sum(C / (sk - self.all_poles))
@@ -2069,7 +2588,6 @@ class VectorFitting:
         Nc = len(D)
         g_pass = 1e16
         smin = 0
-
         for m in range(len(violation_bands)):
             Nint = 21  # number of internal frequency samples resolving each interval
             w1 = violation_bands[m, 0]
@@ -2099,27 +2617,38 @@ class VectorFitting:
                 EE[:, k] = np.diag(EV)
             # Identifying violations, picking minima for s2
             s_pass_ind = np.zeros(shape=(len(s_pass)))
-            if parameter_type.lower() == "r":
-                if np.max(EE[0]) > 1.0:
-                    s_pass_ind_2 = np.where(EE[0] == np.max(EE[0]))[0]
+            # if parameter_type.lower() == "r":
+            #     if np.max(EE[0]) > 1.0:
+            #         s_pass_ind_2 = np.where(EE[0] == np.max(EE[0]))[0]
+            #     else:
+            #         s_pass_ind_2 = np.zeros(shape=(len(s_pass)))
+            #     if isinstance(s_pass_ind_2, (np.ndarray, list)):
+            #         # if len(s_pass_ind_2) > 1:
+            #         s_pass_ind_2 = s_pass_ind_2[0]
+            # else:
+            for row in range(Nc):
+                if parameter_type == "r":
+                    if EE[row, 0] > 1:
+                        s_pass_ind[0] = 1
                 else:
-                    s_pass_ind_2 = np.zeros(shape=(len(s_pass)))
-                if isinstance(s_pass_ind_2, (np.ndarray, list)):
-                    # if len(s_pass_ind_2) > 1:
-                    s_pass_ind_2 = s_pass_ind_2[0]
-            else:
-                for row in range(Nc):
                     if EE[row, 0] < 0:
                         s_pass_ind[0] = 1
-
-                for k in range(1, len(s_pass) - 1):
-                    for row in range(Nc):
+            for k in range(1, len(s_pass) - 1):
+                for row in range(Nc):
+                    if parameter_type == "r":
+                        if EE[row, k] > 1:
+                            if EE[row, k] > EE[row, k - 1] and EE[row, k] > EE[row, k + 1]:
+                                s_pass_ind[k] = 1
+                    else:
                         if EE[row, k] < 0:  # Violation
                             if EE[row, k] < EE[row, k - 1] and EE[row, k] < EE[row, k + 1]:
                                 s_pass_ind[k] = 1
-
-                for s_p in s_pass[np.where(s_pass_ind == 1)[0]]:
-                    sss.append(s_p)
+            # if parameter_type == "r":
+            #     flotti = np.where(EE == np.max(EE))[0]
+            #     s_pass_ind[flotti] = 1
+            # breakpoint()
+            for s_p in s_pass[np.where(s_pass_ind == 1)[0]]:
+                sss.append(s_p)
             # for s_p in s_pass[np.where(s_pass_ind == 1)[0]]:
             #     s.append(s_p)
             # sss.append(s_pass[s_pass_ind_2])
