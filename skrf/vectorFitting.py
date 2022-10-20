@@ -1166,7 +1166,7 @@ class VectorFitting:
 
         wintervals = []
         freq = self.network.f
-        freqtest = np.geomspace(1.0, np.max(freq), 200)
+        freqtest = np.geomspace(1.0, np.max(freq), 9999)
         freqtest = np.insert(freqtest, 0, 0.0)
         A, B, C, D, E = self._get_ABCDE()
 
