@@ -264,7 +264,7 @@ class VectorFitting:
         initial_poles = poles * norm
         max_singular = 1
 
-        logging.info("### Starting pole relocation process.\n")
+        # logging.info("### Starting pole relocation process.\n")
 
         n_responses = self.network.nports**2
         n_freqs = len(freqs_norm)
@@ -539,13 +539,13 @@ class VectorFitting:
                 iterations = 0
 
         # ITERATIONS DONE
-        logging.info("Initial poles before relocation:")
-        logging.info(initial_poles)
+        # logging.info("Initial poles before relocation:")
+        # logging.info(initial_poles)
 
-        logging.info("Final poles:")
-        logging.info(poles * norm)
+        # logging.info("Final poles:")
+        # logging.info(poles * norm)
 
-        logging.info("\n### Starting residues calculation process.\n")
+        # logging.info("\n### Starting residues calculation process.\n")
 
         # finally, solve for the residues with the previously calculated poles
 
@@ -1166,7 +1166,8 @@ class VectorFitting:
 
         wintervals = []
         freq = self.network.f
-        freqtest = np.geomspace(1.0, np.max(freq), 9999)
+        freqtest = np.linspace(1.0, np.max(freq), 29999)
+
         freqtest = np.insert(freqtest, 0, 0.0)
         A, B, C, D, E = self._get_ABCDE()
 
