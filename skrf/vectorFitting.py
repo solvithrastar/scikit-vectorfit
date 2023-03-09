@@ -1166,7 +1166,7 @@ class VectorFitting:
 
         wintervals = []
         freq = self.network.f
-        freqtest = np.linspace(0.1, np.max(freq) * 2, 299999)
+        freqtest = np.linspace(0.1, np.max(freq) * 1.6, 299999)
 
         freqtest = np.insert(freqtest, 0, 0.0)
         A, B, C, D, E = self._get_ABCDE()
