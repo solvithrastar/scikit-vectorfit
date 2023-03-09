@@ -1166,13 +1166,13 @@ class VectorFitting:
 
         wintervals = []
         freq = self.network.f
-        freqtest = np.linspace(1.0, np.max(freq), 29999)
+        freqtest = np.linspace(0.1, np.max(freq) * 1.6, 299999)
 
         freqtest = np.insert(freqtest, 0, 0.0)
         A, B, C, D, E = self._get_ABCDE()
 
         S = np.abs(self._get_s_from_ABCDE(freqs=freqtest, A=A, B=B, C=C, D=D, E=E))
-        non_passive = np.where(S > 1.0)[0]
+        non_passive = np.where(S >= 1.0)[0]
         if len(non_passive) == 0:
             return np.array(wintervals)
 
